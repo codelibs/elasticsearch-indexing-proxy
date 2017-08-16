@@ -1,0 +1,18 @@
+{
+  "config": {
+    "_source": {
+      "enabled": true
+    },
+    "_all": {
+      "enabled": false
+    },
+    "properties": {
+      "file_id": {
+        "type": "keyword"
+      },
+      "@timestamp": {
+        "type": "date"
+      }
+    }
+  }
+}
