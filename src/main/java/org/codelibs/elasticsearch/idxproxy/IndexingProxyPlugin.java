@@ -24,6 +24,9 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
         return Arrays.asList(IndexingProxyService.SETTING_INXPROXY_DATA_PATH, //
                 IndexingProxyService.SETTING_INXPROXY_DATA_FILE_FORMAT, //
                 IndexingProxyService.SETTING_INXPROXY_DATA_FILE_SIZE, //
+                IndexingProxyService.SETTING_INXPROXY_INDEXER_INTERVAL, //
+                IndexingProxyService.SETTING_INXPROXY_INDEXER_RETRY_COUNT, //
+                IndexingProxyService.SETTING_INXPROXY_INDEXER_SKIP_ERROR_FILE, //
                 IndexingProxyService.SETTING_INXPROXY_TARGET_INDICES);
     }
 

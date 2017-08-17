@@ -2,6 +2,7 @@ package org.codelibs.elasticsearch.idxproxy;
 
 import static org.codelibs.elasticsearch.runner.ElasticsearchClusterRunner.newConfigs;
 
+import java.io.IOException;
 import java.util.Map;
 
 import org.codelibs.elasticsearch.runner.ElasticsearchClusterRunner;
@@ -34,6 +35,7 @@ public class IndexingProxyPluginTest extends TestCase {
                 settingsBuilder.put("http.cors.enabled", true);
                 settingsBuilder.put("http.cors.allow-origin", "*");
                 settingsBuilder.putArray("discovery.zen.ping.unicast.hosts", "localhost:9301-9310");
+                settingsBuilder.put("idxproxy.indexer.interval", "1s");
                 settingsBuilder.putArray("idxproxy.target.indices", "sample");
             }
         }).build(newConfigs().clusterName(clusterName).numOfNode(numOfNode)
@@ -62,34 +64,62 @@ public class IndexingProxyPluginTest extends TestCase {
 
         runner.ensureYellow(".idxproxy");
 
-        // post
-        try (CurlResponse curlResponse =
-                Curl.post(node, "/" + index + "/" + type).body("{\"id\":\"2000\",\"msg\":\"test 2000\"}").execute()) {
-            final Map<String, Object> map = curlResponse.getContentAsMap();
-            assertNotNull(map);
-            assertEquals("true", map.get("created").toString());
-        }
+        indexRequest(node, index, type, 1000);
+        createRequest(node, index, type, 1001);
+        updateRequest(node, index, type, 1001);
+        createRequest(node, index, type, 1002);
+        updateByQueryRequest(node, index, type, 1002);
+        createRequest(node, index, type, 1003);
+        deleteRequest(node, index, type, 1003);
+        createRequest(node, index, type, 1004);
+        // deleteByQueryRequest
+        // bulkRequest
+    }
 
-        // put
-        try (CurlResponse curlResponse =
-                Curl.put(node, "/" + index + "/" + type + "/2001").body("{\"id\":\"2001\",\"msg\":\"test 2001\"}").execute()) {
-            final Map<String, Object> map = curlResponse.getContentAsMap();
-            assertNotNull(map);
-            assertEquals("true", map.get("created").toString());
-        }
-
-        // delete
-        try (CurlResponse curlResponse = Curl.delete(node, "/" + index + "/" + type + "/2001").execute()) {
+    private void deleteRequest(Node node, final String index, final String type, final long id) throws IOException {
+        try (CurlResponse curlResponse = Curl.delete(node, "/" + index + "/" + type + "/" + id).execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertEquals("true", map.get("found").toString());
         }
+    }
 
-        //        for (int i = 1; i <= 1000; i++) {
-        //            final IndexResponse indexResponse = runner.insert(index, type, String.valueOf(i),
-        //                    "{\"id\":\"" + i + "\",\"msg\":\"test " + i + "\",\"counter\":" + i + ",\"category\":" + i % 10 + "}");
-        //            assertEquals(Result.CREATED, indexResponse.getResult());
-        //        }
+    private void updateByQueryRequest(Node node, final String index, final String type, final long id) throws IOException {
+        try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/_update_by_query")
+                .header("Content-Type", "application/json").body("{\"script\":{\"inline\":\"ctx._source.msg='test " + (id + 200)
+                        + "'\",\"lang\":\"painless\"},\"query\":{\"term\":{\"id\":" + id + "}}}")
+                .execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(map.containsKey("took"));
+        }
+    }
+
+    private void updateRequest(Node node, final String index, final String type, final long id) throws IOException {
+        try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/" + id + "/_update")
+                .header("Content-Type", "application/json").body("{\"doc\":{\"msg\":\"test " + (id + 100) + "\"}}").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(map.containsKey("result"));
+        }
+    }
+
+    private void createRequest(Node node, final String index, final String type, final long id) throws IOException {
+        try (CurlResponse curlResponse = Curl.put(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json")
+                .body("{\"id\":\"\" + id + \"\",\"msg\":\"test \" + id + \"\"}").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertEquals("true", map.get("created").toString());
+        }
+    }
+
+    private void indexRequest(Node node, final String index, final String type, final long id) throws IOException {
+        try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type).header("Content-Type", "application/json")
+                .body("{\"id\":\"" + id + "\",\"msg\":\"test \"+id+\"\"}").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertEquals("true", map.get("created").toString());
+        }
     }
 
 }
