@@ -10,7 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.util.Strings;
 import org.codelibs.elasticsearch.idxproxy.action.ProxyActionFilter;
 import org.codelibs.elasticsearch.idxproxy.stream.CountingStreamOutput;
@@ -31,12 +32,16 @@ import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.delete.DeleteRequest;
+import org.elasticsearch.action.delete.DeleteRequestBuilder;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.support.ActionFilter;
 import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.WriteRequest.RefreshPolicy;
 import org.elasticsearch.action.update.UpdateRequest;
+import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
@@ -55,12 +60,23 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.index.IndexNotFoundException;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.reindex.DeleteByQueryAction;
+import org.elasticsearch.index.reindex.DeleteByQueryRequest;
+import org.elasticsearch.index.reindex.DeleteByQueryRequestBuilder;
+import org.elasticsearch.index.reindex.UpdateByQueryAction;
 import org.elasticsearch.index.reindex.UpdateByQueryRequest;
+import org.elasticsearch.index.reindex.UpdateByQueryRequestBuilder;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.threadpool.ThreadPool.Names;
 
 public class IndexingProxyService extends AbstractLifecycleComponent {
+
+    private static final String TIMESTAMP = "@timestamp";
+
+    private static final String FILE_POSITION = "file_position";
+
+    private static final String NODE_NAME = "node_name";
 
     private static final String FILE_MAPPING_JSON = "idxproxy/file_mapping.json";
 
@@ -98,6 +114,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     public static final Setting<TimeValue> SETTING_INXPROXY_INDEXER_INTERVAL =
             Setting.timeSetting("idxproxy.indexer.interval", TimeValue.timeValueSeconds(30), Property.NodeScope);
 
+    public static final Setting<Integer> SETTING_INXPROXY_INDEXER_RETRY_COUNT =
+            Setting.intSetting("idxproxy.indexer.retry_count", 10, Property.NodeScope);
+
+    public static final Setting<Boolean> SETTING_INXPROXY_INDEXER_SKIP_ERROR_FILE =
+            Setting.boolSetting("idxproxy.indexer.skip.error_file", true, Property.NodeScope);
+
     private final Client client;
 
     private final Path dataPath;
@@ -117,6 +139,10 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     private final ThreadPool threadPool;
 
     private final TimeValue indexerInterval;
+
+    private final int indexerRetryCount;
+
+    private final boolean indexerSkipErrorFile;
 
     @Inject
     public IndexingProxyService(final Settings settings, final Environment env, final Client client, final ClusterService clusterService,
@@ -143,6 +169,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         dataFileSize = SETTING_INXPROXY_DATA_FILE_SIZE.get(settings).getBytes();
         targetIndexSet = SETTING_INXPROXY_TARGET_INDICES.get(settings).stream().collect(Collectors.toSet());
         indexerInterval = SETTING_INXPROXY_INDEXER_INTERVAL.get(settings);
+        indexerRetryCount = SETTING_INXPROXY_INDEXER_RETRY_COUNT.get(settings);
+        indexerSkipErrorFile = SETTING_INXPROXY_INDEXER_SKIP_ERROR_FILE.get(settings);
 
         for (final ActionFilter filter : filters.filters()) {
             if (filter instanceof ProxyActionFilter) {
@@ -346,16 +374,17 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         return targetIndexSet.contains(index);
     }
 
-    public void startIndexing(final String index, final long filePosition, final ActionListener<?> listener) {
+    public void startIndexer(final String index, final long filePosition, final ActionListener<Map<String, Object>> listener) {
         client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
-                final String workingNodeName = (String) source.get("node_name");
+                final String workingNodeName = (String) source.get(NODE_NAME);
                 if (Strings.isBlank(workingNodeName)) {
                     listener.onFailure(new ElasticsearchException("Indexer is working in " + workingNodeName));
                 } else {
-                    final Number pos = (Number) source.get("file_position");
-                    launchIndexer(index, filePosition > 0 ? filePosition : (pos == null ? 1 : pos.longValue()), res.getVersion(), listener);
+                    final Number pos = (Number) source.get(FILE_POSITION);
+                    final long value = pos == null ? 1 : pos.longValue();
+                    launchIndexer(index, filePosition > 0 ? filePosition : value, res.getVersion(), listener);
                 }
             } else {
                 launchIndexer(index, filePosition > 0 ? filePosition : 1, 0, listener);
@@ -363,22 +392,89 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }, listener::onFailure));
     }
 
-    private void launchIndexer(final String index, final long filePosition, final long version, final ActionListener<?> listener) {
+    private void launchIndexer(final String index, final long filePosition, final long version,
+            final ActionListener<Map<String, Object>> listener) {
         final Map<String, Object> source = new HashMap<>();
-        source.put("node_name", nodeName());
-        source.put("file_position", filePosition);
-        source.put("@timestamp", new Date());
-        final IndexRequestBuilder builder = client.prepareIndex(INDEX_NAME, TYPE_NAME, index).setSource(source);
+        source.put(NODE_NAME, nodeName());
+        source.put(FILE_POSITION, filePosition);
+        source.put(TIMESTAMP, new Date());
+        final IndexRequestBuilder builder =
+                client.prepareIndex(INDEX_NAME, TYPE_NAME, index).setSource(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL);
         if (version > 0) {
             builder.setVersion(version);
+        } else {
+            builder.setCreate(true);
         }
         builder.execute(wrap(res -> {
             if (res.getResult() == Result.CREATED || res.getResult() == Result.UPDATED) {
                 threadPool.schedule(TimeValue.ZERO, Names.GENERIC, new Indexer());
-                listener.onResponse(null);
+                listener.onResponse(source);
             } else {
                 listener.onFailure(new ElasticsearchException("Failed to update .idxproxy index: " + res));
             }
+        }, listener::onFailure));
+    }
+
+    public void stopIndexer(final String index, final ActionListener<Map<String, Object>> listener) {
+        client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
+            final Map<String, Object> params = new HashMap<>();
+            if (res.isExists()) {
+                final Map<String, Object> source = res.getSourceAsMap();
+                final String workingNodeName = (String) source.get(NODE_NAME);
+                params.put("node", nodeName());
+                params.put("found", true);
+                if (Strings.isBlank(workingNodeName)) {
+                    params.put("stop", false);
+                    params.put("working", "");
+                } else if (nodeName().equals(workingNodeName)) {
+                    params.put("working", workingNodeName);
+                    // stop
+                    final long version = res.getVersion();
+                    final Map<String, Object> newSource = new HashMap<>();
+                    newSource.put(NODE_NAME, "");
+                    newSource.put(TIMESTAMP, new Date());
+                    client.prepareUpdate(INDEX_NAME, TYPE_NAME, index).setVersion(version).setDoc(newSource)
+                            .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res2 -> {
+                                params.put("stop", true);
+                                listener.onResponse(params);
+                            }, listener::onFailure));
+                } else {
+                    params.put("stop", false);
+                    params.put("working", workingNodeName);
+                }
+            } else {
+                params.put("found", false);
+                params.put("stop", false);
+                params.put("working", "");
+            }
+            if (params.containsKey("stop")) {
+                listener.onResponse(params);
+            }
+        }, listener::onFailure));
+    }
+
+    public void getIndexerInfos(final int from, final int size, final ActionListener<Map<String, Object>> listener) {
+        client.prepareSearch(INDEX_NAME).setQuery(QueryBuilders.matchAllQuery()).setFrom(from).setSize(size).execute(wrap(res -> {
+            final Map<String, Object> params = new HashMap<>();
+            params.put("took_in_millis", res.getTookInMillis());
+            params.put("indexers", Arrays.stream(res.getHits().getHits()).map(hit -> {
+                return hit.getSource();
+            }).toArray(n -> new Map[n]));
+            listener.onResponse(params);
+        }, listener::onFailure));
+    }
+
+    public void getIndexerInfo(final String index, final ActionListener<Map<String, Object>> listener) {
+        client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
+            final Map<String, Object> params = new HashMap<>();
+            if (res.isExists()) {
+                final Map<String, Object> source = res.getSourceAsMap();
+                params.putAll(source);
+                params.put("found", true);
+            } else {
+                params.put("found", false);
+            }
+            listener.onResponse(params);
         }, listener::onFailure));
     }
 
@@ -386,61 +482,231 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
         private String index;
 
+        private Path path;
+
+        private long filePosition;
+
+        private long version;
+
+        private volatile int errorCount = 0;
+
         @Override
         public void run() {
             client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
                 if (res.isExists()) {
                     final Map<String, Object> source = res.getSourceAsMap();
-                    final String workingNodeName = (String) source.get("node_name");
+                    final String workingNodeName = (String) source.get(NODE_NAME);
                     if (!nodeName().equals(workingNodeName)) {
                         logger.info("Stopped Indexer({}) because of working in [{}].", index, workingNodeName);
+                        // end
                     } else {
-                        final Number pos = (Number) source.get("file_position");
+                        final Number pos = (Number) source.get(FILE_POSITION);
                         if (pos == null) {
                             logger.error("Stopped Indexer({}). No file_position.", index);
+                            // end: system error
                         } else {
-                            process(pos.longValue());
+                            filePosition = pos.longValue();
+                            version = res.getVersion();
+                            process(filePosition);
+                            // continue
                         }
                     }
                 } else {
                     logger.info("Stopped Indexer({}).", index);
+                    // end
                 }
             }, e -> {
-                logger.error("Indexer(" + index + ") is failed. ", e);
+                retryWithError("Indexer data is not found.", e);
+                // retry
             }));
         }
 
+        private void retryWithError(final String message, final Exception e) {
+            errorCount++;
+            if (errorCount > indexerRetryCount) {
+                logger.error("Indexer(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
+                if (indexerSkipErrorFile) {
+                    processNext();
+                }
+            } else {
+                logger.warn("Indexer(" + index + ")@" + errorCount + ": " + message, e);
+                threadPool.schedule(indexerInterval, Names.GENERIC, this);
+            }
+        }
+
         private void process(final long filePosition) {
-            final Path path = dataPath.resolve(String.format(dataFileFormat, nodeName(), filePosition) + DATA_EXTENTION);
+            path = dataPath.resolve(String.format(dataFileFormat, nodeName(), filePosition) + DATA_EXTENTION);
             if (path.toFile().exists()) {
-                logger.info("Indexing from {}", path.toAbsolutePath());
-                try (StreamInput streamInput = new InputStreamStreamInput(Files.newInputStream(path))) {
-                    final List<ActionRequest> requestList = loadRequests(streamInput);
-                    // TODO
+                logger.info("[{}][{}] Indexing from {}", filePosition, version, path.toAbsolutePath());
+                try {
+                    processRequests(new InputStreamStreamInput(Files.newInputStream(path)));
+                    // continue
                 } catch (final IOException e) {
-                    logger.error("Failed to read " + path.toAbsolutePath(), e);
+                    retryWithError("Failed to access " + path.toAbsolutePath(), e);
+                    // retry
                 }
             } else {
                 if (logger.isDebugEnabled()) {
                     logger.debug("{} does not exist.", path.toAbsolutePath());
                 }
                 threadPool.schedule(indexerInterval, Names.GENERIC, this);
+                // retry
             }
         }
 
-        private List<ActionRequest> loadRequests(final StreamInput streamInput) throws IOException {
-            final List<ActionRequest> list = new ArrayList<>();
-            while (streamInput.available() > 0) {
-                final short classType = streamInput.readShort();
-                switch (classType) {
-                case TYPE_DELETE:
-                    // TODO
-                    break;
-                default:
-                    break;
+        private void processRequests(final StreamInput streamInput) {
+            try {
+                if (streamInput.available() > 0) {
+                    final short classType = streamInput.readShort();
+                    switch (classType) {
+                    case TYPE_DELETE:
+                        processDeleteRequest(streamInput);
+                        break;
+                    case TYPE_DELETE_BY_QUERY:
+                        processDeleteByQueryRequest(streamInput);
+                        break;
+                    case TYPE_INDEX:
+                        processIndexRequest(streamInput);
+                        break;
+                    case TYPE_UPDATE:
+                        processUpdateRequest(streamInput);
+                        break;
+                    case TYPE_UPDATE_BY_QUERY:
+                        processUpdateByQueryRequest(streamInput);
+                        break;
+                    case TYPE_BULK:
+                        processBulkRequest(streamInput);
+                        break;
+                    default:
+                        throw new ElasticsearchException("Unknown request type: " + classType);
+                    }
+                } else {
+                    IOUtils.closeQuietly(streamInput);
+                    logger.info("Finished to process {}", path.toAbsolutePath());
+
+                    processNext();
                 }
+            } catch (final Exception e) {
+                IOUtils.closeQuietly(streamInput);
+                retryWithError("Failed to access streamInput.", e);
+                // retry
             }
-            return list;
+        }
+
+        private void processNext() {
+            final Map<String, Object> source = new HashMap<>();
+            source.put(FILE_POSITION, filePosition + 1);
+            source.put(TIMESTAMP, new Date());
+            client.prepareUpdate(INDEX_NAME, TYPE_NAME, index).setVersion(version).setDoc(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL)
+                    .execute(wrap(res -> {
+                        errorCount = 0;
+                        threadPool.schedule(TimeValue.ZERO, Names.GENERIC, this);
+                        // retry: success
+                    }, e -> {
+                        retryWithError("Failed to access streamInput.", e);
+                        // retry
+                    }));
+        }
+
+        private void processBulkRequest(final StreamInput streamInput) throws IOException {
+            final BulkRequestBuilder builder = client.prepareBulk();
+            final BulkRequest request = builder.request();
+            request.readFrom(streamInput);
+            builder.request().requests().stream().forEach(req -> {
+                if (req instanceof DeleteRequest) {
+                    ((DeleteRequest) req).index(index);
+                } else if (req instanceof DeleteByQueryRequest) {
+                    ((DeleteByQueryRequest) req).indices(index);
+                } else if (req instanceof IndexRequest) {
+                    ((IndexRequest) req).index(index);
+                } else if (req instanceof UpdateRequest) {
+                    ((UpdateRequest) req).index(index);
+                } else if (req instanceof UpdateByQueryRequest) {
+                    ((UpdateByQueryRequest) req).indices(index);
+                } else {
+                    throw new ElasticsearchException("Unsupported request in bulk: " + req);
+                }
+            });
+            builder.execute(wrap(res -> {
+                processRequests(streamInput);
+                // continue
+            }, e -> {
+                IOUtils.closeQuietly(streamInput);
+                retryWithError("Failed to process (" + request + ")", e);
+                // retry
+            }));
+        }
+
+        private void processUpdateByQueryRequest(final StreamInput streamInput) throws IOException {
+            final UpdateByQueryRequestBuilder builder = client.prepareExecute(UpdateByQueryAction.INSTANCE);
+            final UpdateByQueryRequest request = builder.request();
+            request.readFrom(streamInput);
+            request.indices(index);
+            builder.execute(wrap(res -> {
+                processRequests(streamInput);
+                // continue
+            }, e -> {
+                IOUtils.closeQuietly(streamInput);
+                retryWithError("Failed to update (" + request + ")", e);
+                // retry
+            }));
+        }
+
+        private void processUpdateRequest(final StreamInput streamInput) throws IOException {
+            final UpdateRequestBuilder builder = client.prepareUpdate();
+            final UpdateRequest request = builder.request();
+            request.readFrom(streamInput);
+            request.index(index);
+            builder.execute(wrap(res -> {
+                processRequests(streamInput);
+                // continue
+            }, e -> {
+                IOUtils.closeQuietly(streamInput);
+                retryWithError("Failed to update (" + request + ")", e);
+                // retry
+            }));
+        }
+
+        private void processIndexRequest(final StreamInput streamInput) throws IOException {
+            final IndexRequestBuilder builder = client.prepareIndex();
+            final IndexRequest request = builder.request();
+            request.readFrom(streamInput);
+            request.index(index);
+            builder.execute(wrap(res -> {
+                processRequests(streamInput);
+            }, e -> {
+                IOUtils.closeQuietly(streamInput);
+                retryWithError("Failed to index (" + request + ")", e);
+                // retry
+            }));
+        }
+
+        private void processDeleteByQueryRequest(final StreamInput streamInput) throws IOException {
+            final DeleteByQueryRequestBuilder builder = client.prepareExecute(DeleteByQueryAction.INSTANCE);
+            final DeleteByQueryRequest request = builder.request();
+            request.readFrom(streamInput);
+            request.indices(index);
+            builder.execute(wrap(res -> {
+                processRequests(streamInput);
+            }, e -> {
+                IOUtils.closeQuietly(streamInput);
+                retryWithError("Failed to delete (" + request + ")", e);
+                // retry
+            }));
+        }
+
+        private void processDeleteRequest(final StreamInput streamInput) throws IOException {
+            final DeleteRequestBuilder builder = client.prepareDelete();
+            final DeleteRequest request = builder.request();
+            request.readFrom(streamInput);
+            request.index(index);
+            builder.execute(wrap(res -> {
+                processRequests(streamInput);
+            }, e -> {
+                IOUtils.closeQuietly(streamInput);
+                retryWithError("Failed to delete (" + request + ")", e);
+                // retry
+            }));
         }
     }
 }

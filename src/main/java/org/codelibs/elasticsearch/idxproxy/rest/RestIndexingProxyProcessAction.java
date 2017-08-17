@@ -1,5 +1,6 @@
 package org.codelibs.elasticsearch.idxproxy.rest;
 
+import static org.elasticsearch.action.ActionListener.wrap;
 import static org.elasticsearch.rest.RestStatus.OK;
 
 import java.io.IOException;
@@ -28,6 +29,7 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
         super(settings);
         this.indexingProxyService = indexingProxyService;
 
+        controller.registerHandler(RestRequest.Method.GET, "/_idxproxy/process", this);
         controller.registerHandler(RestRequest.Method.GET, "/{index}/_idxproxy/process", this);
         controller.registerHandler(RestRequest.Method.POST, "/{index}/_idxproxy/process", this);
         controller.registerHandler(RestRequest.Method.DELETE, "/{index}/_idxproxy/process", this);
@@ -36,23 +38,62 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
     @Override
     protected RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
         switch (request.method()) {
-        case GET: {
-
-        }
-        case POST: {
-            final String index = request.param("index");
-            return channel -> {
-                //indexingProxyService.startIndexing(index);
-                //  sendResponse(channel, params);
-            };
-        }
-        case DELETE: {
-
-        }
+        case GET:
+            return prepareGetRequest(request);
+        case POST:
+            return preparePostRequest(request);
+        case DELETE:
+            return prepareDeleteRequest(request);
+        default:
+            break;
         }
 
         return channel -> {
             sendErrorResponse(channel, new ElasticsearchException("Unknown request: " + request));
+        };
+    }
+
+    private RestChannelConsumer prepareGetRequest(final RestRequest request) {
+        final String index = request.param("index");
+        final int from = request.paramAsInt("from", 0);
+        final int size = request.paramAsInt("size", 10);
+        return channel -> {
+            if (index == null || index.trim().length() == 0) {
+                indexingProxyService.getIndexerInfos(from, size, wrap(res -> {
+                    sendResponse(channel, res);
+                }, e -> {
+                    sendErrorResponse(channel, e);
+                }));
+            } else {
+                indexingProxyService.getIndexerInfo(index, wrap(res -> {
+                    sendResponse(channel, res);
+                }, e -> {
+                    sendErrorResponse(channel, e);
+                }));
+            }
+        };
+    }
+
+    private RestChannelConsumer prepareDeleteRequest(final RestRequest request) {
+        final String index = request.param("index");
+        return channel -> {
+            indexingProxyService.stopIndexer(index, wrap(res -> {
+                sendResponse(channel, res);
+            }, e -> {
+                sendErrorResponse(channel, e);
+            }));
+        };
+    }
+
+    private RestChannelConsumer preparePostRequest(final RestRequest request) {
+        final String index = request.param("index");
+        final long position = request.paramAsLong("position", 0);
+        return channel -> {
+            indexingProxyService.startIndexer(index, position, wrap(res -> {
+                sendResponse(channel, res);
+            }, e -> {
+                sendErrorResponse(channel, e);
+            }));
         };
     }
 
