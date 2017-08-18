@@ -21,6 +21,7 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.util.Strings;
+import org.codelibs.elasticsearch.idxproxy.IndexingProxyPlugin.PluginComponent;
 import org.codelibs.elasticsearch.idxproxy.action.ProxyActionFilter;
 import org.codelibs.elasticsearch.idxproxy.stream.CountingStreamOutput;
 import org.elasticsearch.ElasticsearchException;
@@ -146,7 +147,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
     @Inject
     public IndexingProxyService(final Settings settings, final Environment env, final Client client, final ClusterService clusterService,
-            final ThreadPool threadPool, final ActionFilters filters) {
+            final ThreadPool threadPool, final ActionFilters filters, final PluginComponent pluginComponent) {
         super(settings);
         this.client = client;
         this.clusterService = clusterService;
@@ -177,6 +178,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                 ((ProxyActionFilter) filter).setIndexingProxyService(this);
             }
         }
+
+        pluginComponent.setIndexingProxyService(this);
     }
 
     @Override
@@ -356,7 +359,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     private <Request extends ActionRequest> short getClassType(final Request request) {
         if (DeleteRequest.class.isInstance(request)) {
             return TYPE_DELETE;
-        } else if (DeleteByQueryAction.class.isInstance(request)) {
+        } else if (DeleteByQueryRequest.class.isInstance(request)) {
             return TYPE_DELETE_BY_QUERY;
         } else if (IndexRequest.class.isInstance(request)) {
             return TYPE_INDEX;
@@ -407,7 +410,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }
         builder.execute(wrap(res -> {
             if (res.getResult() == Result.CREATED || res.getResult() == Result.UPDATED) {
-                threadPool.schedule(TimeValue.ZERO, Names.GENERIC, new Indexer());
+                threadPool.schedule(TimeValue.ZERO, Names.GENERIC, new Indexer(index));
                 listener.onResponse(source);
             } else {
                 listener.onFailure(new ElasticsearchException("Failed to update .idxproxy index: " + res));
@@ -489,6 +492,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         private long version;
 
         private volatile int errorCount = 0;
+
+        private volatile int docErrorCount = 0;
+
+        public Indexer(String index) {
+            this.index = index;
+        }
 
         @Override
         public void run() {
@@ -600,6 +609,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
             client.prepareUpdate(INDEX_NAME, TYPE_NAME, index).setVersion(version).setDoc(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL)
                     .execute(wrap(res -> {
                         errorCount = 0;
+                        docErrorCount = 0;
                         threadPool.schedule(TimeValue.ZERO, Names.GENERIC, this);
                         // retry: success
                     }, e -> {
@@ -701,6 +711,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
             request.readFrom(streamInput);
             request.index(index);
             builder.execute(wrap(res -> {
+                docErrorCount = 0;
                 processRequests(streamInput);
             }, e -> {
                 IOUtils.closeQuietly(streamInput);

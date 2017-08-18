@@ -6,10 +6,10 @@ import static org.elasticsearch.rest.RestStatus.OK;
 import java.io.IOException;
 import java.util.Map;
 
+import org.codelibs.elasticsearch.idxproxy.IndexingProxyPlugin.PluginComponent;
 import org.codelibs.elasticsearch.idxproxy.service.IndexingProxyService;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.client.node.NodeClient;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
@@ -23,11 +23,9 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
 
     private final IndexingProxyService indexingProxyService;
 
-    @Inject
-    public RestIndexingProxyProcessAction(final Settings settings, final RestController controller,
-            final IndexingProxyService indexingProxyService) {
+    public RestIndexingProxyProcessAction(final Settings settings, final RestController controller, PluginComponent pluginComponent) {
         super(settings);
-        this.indexingProxyService = indexingProxyService;
+        indexingProxyService = pluginComponent.getIndexingProxyService();
 
         controller.registerHandler(RestRequest.Method.GET, "/_idxproxy/process", this);
         controller.registerHandler(RestRequest.Method.GET, "/{index}/_idxproxy/process", this);
