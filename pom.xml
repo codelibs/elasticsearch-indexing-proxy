@@ -118,6 +118,12 @@
 			<artifactId>elasticsearch-cluster-runner</artifactId>
 			<version>5.5.2.0</version>
 			<scope>test</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>org.codelibs.elasticsearch.module</groupId>
+					<artifactId>lang-expression</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>junit</groupId>

@@ -3,6 +3,7 @@ package org.codelibs.elasticsearch.idxproxy;
 import static org.codelibs.elasticsearch.runner.ElasticsearchClusterRunner.newConfigs;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
@@ -52,6 +53,7 @@ public class IndexingProxyPluginTest extends TestCase {
         runner.clean();
     }
 
+    @SuppressWarnings("unchecked")
     public void test_indexing() throws Exception {
         setUp((number, settingsBuilder) -> {
             settingsBuilder.put("idxproxy.indexer.interval", "1s");
@@ -68,6 +70,7 @@ public class IndexingProxyPluginTest extends TestCase {
 
         runner.ensureYellow(".idxproxy");
 
+        // send requests to data file
         indexRequest(node, alias, type, 1000);
         createRequest(node, alias, type, 1001);
         updateRequest(node, alias, type, 1001);
@@ -87,6 +90,7 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals(0, ((Number) hits.get("total")).longValue());
         }
 
+        // flush data file
         runner.refresh();
 
         try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search").header("Content-Type", "application/json")
@@ -101,20 +105,46 @@ public class IndexingProxyPluginTest extends TestCase {
                 Curl.post(node, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
-            // assertEquals(0, ((Number) ((Map<String, Object>) map.get("hits")).get("total")).longValue());
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(1, ((Integer) map.get("file_position")).intValue());
         }
 
-        /*
+        for (int i = 0; i < 10; i++) {
+            try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search")
+                    .header("Content-Type", "application/json").body("{\"query\":{\"match_all\":{}}}").execute()) {
+                final Map<String, Object> map = curlResponse.getContentAsMap();
+                Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+                if (((Number) hits.get("total")).longValue() == 5) {
+                    break;
+                }
+            }
+            Thread.sleep(1000L);
+        }
+
+        runner.refresh();
+
         try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search").header("Content-Type", "application/json")
                 .body("{\"query\":{\"match_all\":{}},\"sort\":[{\"id\":{\"order\":\"asc\"}}]}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
-            assertEquals(0, ((Number) ((Map<String, Object>) map.get("hits")).get("total")).longValue());
+            Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+            assertEquals(5, ((Number) hits.get("total")).longValue());
+            List<Map<String, Object>> list = (List<Map<String, Object>>) hits.get("hits");
+            assertEquals("test 1000", ((Map<String, Object>) list.get(0).get("_source")).get("msg"));
+            assertEquals("test 1101", ((Map<String, Object>) list.get(1).get("_source")).get("msg"));
+            assertEquals("test 1202", ((Map<String, Object>) list.get(2).get("_source")).get("msg"));
+            assertEquals("test 1005", ((Map<String, Object>) list.get(3).get("_source")).get("msg"));
+            assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
+        }
+
+        try (CurlResponse curlResponse = Curl.get(node, "/.idxproxy/config/sample1").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertEquals(2, ((Number) ((Map<String, Object>) map.get("_source")).get("file_position")).longValue());
         }
 
         final String index2 = "sample2";
         runner.createIndex(index2, Settings.builder().build());
-        */
     }
 
     private void bulkRequest(Node node, final String index, final String type, final long id) throws IOException {
@@ -125,7 +155,7 @@ public class IndexingProxyPluginTest extends TestCase {
         value++;
         createRequest(node, index, type, value);
         buf.append("{\"update\":{\"_index\":\"" + index + "\",\"_type\":\"" + type + "\",\"_id\":\"" + value + "\"}}\n");
-        buf.append("{\"doc\":{\"msg\":\"test " + (value + 100) + "\"}}\n");
+        buf.append("{\"doc\":{\"msg\":\"test " + (value + 300) + "\"}}\n");
         value++;
         createRequest(node, index, type, value);
         buf.append("{\"delete\":{\"_index\":\"" + index + "\",\"_type\":\"" + type + "\",\"_id\":\"" + value + "\"}}\n");
@@ -178,7 +208,7 @@ public class IndexingProxyPluginTest extends TestCase {
 
     private void createRequest(Node node, final String index, final String type, final long id) throws IOException {
         try (CurlResponse curlResponse = Curl.put(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json")
-                .param("refresh", "true").body("{\"id\":\"\" + id + \"\",\"msg\":\"test \" + id + \"\"}").execute()) {
+                .param("refresh", "true").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertEquals("true", map.get("created").toString());
@@ -187,7 +217,7 @@ public class IndexingProxyPluginTest extends TestCase {
 
     private void indexRequest(Node node, final String index, final String type, final long id) throws IOException {
         try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type).header("Content-Type", "application/json")
-                .param("refresh", "true").body("{\"id\":\"" + id + "\",\"msg\":\"test \"+id+\"\"}").execute()) {
+                .param("refresh", "true").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertEquals("true", map.get("created").toString());

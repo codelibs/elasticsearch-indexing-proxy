@@ -7,10 +7,10 @@ import java.io.OutputStream;
 import org.apache.commons.io.output.CountingOutputStream;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
-public class CountingStreamOutput extends StreamOutput {
+public class IndexingProxyStreamOutput extends StreamOutput {
     private final CountingOutputStream out;
 
-    public CountingStreamOutput(final OutputStream out) {
+    public IndexingProxyStreamOutput(final OutputStream out) {
         this.out = new CountingOutputStream(new BufferedOutputStream(out));
     }
 

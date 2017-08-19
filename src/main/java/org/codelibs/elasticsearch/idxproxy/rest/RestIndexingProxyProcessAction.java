@@ -23,7 +23,7 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
 
     private final IndexingProxyService indexingProxyService;
 
-    public RestIndexingProxyProcessAction(final Settings settings, final RestController controller, PluginComponent pluginComponent) {
+    public RestIndexingProxyProcessAction(final Settings settings, final RestController controller, final PluginComponent pluginComponent) {
         super(settings);
         indexingProxyService = pluginComponent.getIndexingProxyService();
 
