@@ -53,34 +53,41 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
         final String index = request.param("index");
         final int from = request.paramAsInt("from", 0);
         final int size = request.paramAsInt("size", 10);
+        final boolean pretty = request.paramAsBoolean("pretty", false);
         return channel -> {
             if (index == null || index.trim().length() == 0) {
                 indexingProxyService.getIndexerInfos(from, size,
-                        wrap(res -> sendResponse(channel, res), e -> sendErrorResponse(channel, e)));
+                        wrap(res -> sendResponse(channel, res, pretty), e -> sendErrorResponse(channel, e)));
             } else {
-                indexingProxyService.getIndexerInfo(index, wrap(res -> sendResponse(channel, res), e -> sendErrorResponse(channel, e)));
+                indexingProxyService.getIndexerInfo(index,
+                        wrap(res -> sendResponse(channel, res, pretty), e -> sendErrorResponse(channel, e)));
             }
         };
     }
 
     private RestChannelConsumer prepareDeleteRequest(final RestRequest request) {
         final String index = request.param("index");
-        return channel -> {
-            indexingProxyService.stopIndexer(index, wrap(res -> sendResponse(channel, res), e -> sendErrorResponse(channel, e)));
-        };
+        final boolean pretty = request.paramAsBoolean("pretty", false);
+        return channel -> indexingProxyService.stopIndexer(index,
+                wrap(res -> sendResponse(channel, res, pretty), e -> sendErrorResponse(channel, e)));
     }
 
     private RestChannelConsumer preparePostRequest(final RestRequest request) {
         final String index = request.param("index");
         final long position = request.paramAsLong("position", 0);
+        final boolean pretty = request.paramAsBoolean("pretty", false);
         return channel -> {
-            indexingProxyService.startIndexer(index, position, wrap(res -> sendResponse(channel, res), e -> sendErrorResponse(channel, e)));
+            indexingProxyService.startIndexer(index, position,
+                    wrap(res -> sendResponse(channel, res, pretty), e -> sendErrorResponse(channel, e)));
         };
     }
 
-    protected void sendResponse(final RestChannel channel, final Map<String, Object> params) {
+    protected void sendResponse(final RestChannel channel, final Map<String, Object> params, final boolean pretty) {
         try {
             final XContentBuilder builder = JsonXContent.contentBuilder();
+            if (pretty) {
+                builder.prettyPrint();
+            }
             builder.startObject();
             builder.field("acknowledged", true);
             if (params != null) {
