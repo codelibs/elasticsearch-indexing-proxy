@@ -5,7 +5,7 @@ Elasticsearch Indexing Proxy Plugin
 
 This plugin provides a proxy feature for target indices.
 For target indices, this plugin intercepts indexing requests and writes them to files.
-Moreover, Indexer provided by this plugin reads the files and sends them to any indices.
+Moreover, Document Sender provided by this plugin reads the files and sends them to any indices.
 
 ## Version
 
@@ -113,9 +113,9 @@ ls idxproxy-data/
 0000000000000000001.dat		0000000000000000002.tmp
 ```
 
-### Start Indexer
+### Start Document Sender
 
-Start Indexer for sample1 index:
+Start Document Sender for sample1 index:
 
 ```
 curl -XPOST 'localhost:9200/sample1/_idxproxy/process?pretty'
@@ -129,9 +129,9 @@ curl 'localhost:9200/sample/_search?q=*:*&pretty'
 
 You will find a sent document.
 
-### Stop Indexer
+### Stop Document Sender
 
-Stop Indexer for sample1 index:
+Stop Document Sender for sample1 index:
 
 ```
 curl -XDELETE 'localhost:9200/sample1/_idxproxy/process?pretty'

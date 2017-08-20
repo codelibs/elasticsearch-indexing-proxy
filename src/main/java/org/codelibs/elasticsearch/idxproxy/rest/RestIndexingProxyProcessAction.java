@@ -56,10 +56,10 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
         final boolean pretty = request.paramAsBoolean("pretty", false);
         return channel -> {
             if (index == null || index.trim().length() == 0) {
-                indexingProxyService.getIndexerInfos(from, size,
+                indexingProxyService.getDocSenderInfos(from, size,
                         wrap(res -> sendResponse(channel, res, pretty), e -> sendErrorResponse(channel, e)));
             } else {
-                indexingProxyService.getIndexerInfo(index,
+                indexingProxyService.getDocSenderInfo(index,
                         wrap(res -> sendResponse(channel, res, pretty), e -> sendErrorResponse(channel, e)));
             }
         };
@@ -68,7 +68,7 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
     private RestChannelConsumer prepareDeleteRequest(final RestRequest request) {
         final String index = request.param("index");
         final boolean pretty = request.paramAsBoolean("pretty", false);
-        return channel -> indexingProxyService.stopIndexer(index,
+        return channel -> indexingProxyService.stopDocSender(index,
                 wrap(res -> sendResponse(channel, res, pretty), e -> sendErrorResponse(channel, e)));
     }
 
@@ -77,7 +77,7 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
         final long position = request.paramAsLong("position", 0);
         final boolean pretty = request.paramAsBoolean("pretty", false);
         return channel -> {
-            indexingProxyService.startIndexer(index, position,
+            indexingProxyService.startDocSender(index, position,
                     wrap(res -> sendResponse(channel, res, pretty), e -> sendErrorResponse(channel, e)));
         };
     }

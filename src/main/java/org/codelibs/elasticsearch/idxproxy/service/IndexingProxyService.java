@@ -394,31 +394,31 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         return targetIndexSet.contains(index);
     }
 
-    public void startIndexer(final String index, final long filePosition, final ActionListener<Map<String, Object>> listener) {
+    public void startDocSender(final String index, final long filePosition, final ActionListener<Map<String, Object>> listener) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Starting Indexer(" + index + ")");
+            logger.debug("Starting DocSender(" + index + ")");
         }
         client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String workingNodeName = (String) source.get(NODE_NAME);
                 if (Strings.isBlank(workingNodeName)) {
-                    listener.onFailure(new ElasticsearchException("Indexer is working in " + workingNodeName));
+                    listener.onFailure(new ElasticsearchException("DocSender is working in " + workingNodeName));
                 } else {
                     final Number pos = (Number) source.get(FILE_POSITION);
                     final long value = pos == null ? 1 : pos.longValue();
-                    launchIndexer(index, filePosition > 0 ? filePosition : value, res.getVersion(), listener);
+                    launchDocSender(index, filePosition > 0 ? filePosition : value, res.getVersion(), listener);
                 }
             } else {
-                launchIndexer(index, filePosition > 0 ? filePosition : 1, 0, listener);
+                launchDocSender(index, filePosition > 0 ? filePosition : 1, 0, listener);
             }
         }, listener::onFailure));
     }
 
-    private void launchIndexer(final String index, final long filePosition, final long version,
+    private void launchDocSender(final String index, final long filePosition, final long version,
             final ActionListener<Map<String, Object>> listener) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Launching Indexer(" + index + ")");
+            logger.debug("Launching DocSender(" + index + ")");
         }
         final Map<String, Object> source = new HashMap<>();
         source.put(NODE_NAME, nodeName());
@@ -433,7 +433,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }
         builder.execute(wrap(res -> {
             if (res.getResult() == Result.CREATED || res.getResult() == Result.UPDATED) {
-                threadPool.schedule(TimeValue.ZERO, Names.GENERIC, new Indexer(index));
+                threadPool.schedule(TimeValue.ZERO, Names.GENERIC, new DocSender(index));
                 listener.onResponse(source);
             } else {
                 listener.onFailure(new ElasticsearchException("Failed to update .idxproxy index: " + res));
@@ -441,9 +441,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }, listener::onFailure));
     }
 
-    public void stopIndexer(final String index, final ActionListener<Map<String, Object>> listener) {
+    public void stopDocSender(final String index, final ActionListener<Map<String, Object>> listener) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Stopping Indexer(" + index + ")");
+            logger.debug("Stopping DocSender(" + index + ")");
         }
         client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
             final Map<String, Object> params = new HashMap<>();
@@ -482,7 +482,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }, listener::onFailure));
     }
 
-    public void getIndexerInfos(final int from, final int size, final ActionListener<Map<String, Object>> listener) {
+    public void getDocSenderInfos(final int from, final int size, final ActionListener<Map<String, Object>> listener) {
         client.prepareSearch(INDEX_NAME).setQuery(QueryBuilders.matchAllQuery()).setFrom(from).setSize(size).execute(wrap(res -> {
             final Map<String, Object> params = new HashMap<>();
             params.put("took_in_millis", res.getTookInMillis());
@@ -493,7 +493,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }, listener::onFailure));
     }
 
-    public void getIndexerInfo(final String index, final ActionListener<Map<String, Object>> listener) {
+    public void getDocSenderInfo(final String index, final ActionListener<Map<String, Object>> listener) {
         client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
             final Map<String, Object> params = new HashMap<>();
             if (res.isExists()) {
@@ -513,7 +513,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         });
     }
 
-    class Indexer implements Runnable {
+    class DocSender implements Runnable {
 
         private final String index;
 
@@ -527,26 +527,26 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
         private volatile int requestErrorCount = 0;
 
-        public Indexer(final String index) {
+        public DocSender(final String index) {
             this.index = index;
         }
 
         @Override
         public void run() {
             if (logger.isDebugEnabled()) {
-                logger.debug("Running Indexer(" + index + ")");
+                logger.debug("Running DocSender(" + index + ")");
             }
             client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
                 if (res.isExists()) {
                     final Map<String, Object> source = res.getSourceAsMap();
                     final String workingNodeName = (String) source.get(NODE_NAME);
                     if (!nodeName().equals(workingNodeName)) {
-                        logger.info("Stopped Indexer({}) because of working in [{}].", index, workingNodeName);
+                        logger.info("Stopped DocSender({}) because of working in [{}].", index, workingNodeName);
                         // end
                     } else {
                         final Number pos = (Number) source.get(FILE_POSITION);
                         if (pos == null) {
-                            logger.error("Stopped Indexer({}). No file_position.", index);
+                            logger.error("Stopped DocSender({}). No file_position.", index);
                             // end: system error
                         } else {
                             filePosition = pos.longValue();
@@ -556,11 +556,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                         }
                     }
                 } else {
-                    logger.info("Stopped Indexer({}).", index);
+                    logger.info("Stopped DocSender({}).", index);
                     // end
                 }
             }, e -> {
-                retryWithError("Indexer data is not found.", e);
+                retryWithError("DocSender data is not found.", e);
                 // retry
             }));
         }
@@ -568,19 +568,19 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         private void retryWithError(final String message, final Exception e) {
             errorCount++;
             if (errorCount > indexerRetryCount) {
-                logger.error("Indexer(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
+                logger.error("DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
                 if (indexerSkipErrorFile) {
                     processNext();
                 }
             } else {
-                logger.warn("Indexer(" + index + ")@" + errorCount + ": " + message, e);
+                logger.warn("DocSender(" + index + ")@" + errorCount + ": " + message, e);
                 threadPool.schedule(indexerInterval, Names.GENERIC, this);
             }
         }
 
         private void process(final long filePosition) {
             if (logger.isDebugEnabled()) {
-                logger.debug("Indexer(" + index + ") processes " + filePosition);
+                logger.debug("DocSender(" + index + ") processes " + filePosition);
             }
             path = dataPath.resolve(String.format(dataFileFormat, filePosition) + DATA_EXTENTION);
             if (existsFile(path)) {
@@ -610,7 +610,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         private void processRequests(final StreamInput streamInput) {
             try {
                 if (logger.isDebugEnabled()) {
-                    logger.debug("Indexer(" + index + ") is processing requests.");
+                    logger.debug("DocSender(" + index + ") is processing requests.");
                 }
                 if (streamInput.available() > 0) {
                     final short classType = streamInput.readShort();
@@ -651,7 +651,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
         private void processNext() {
             if (logger.isDebugEnabled()) {
-                logger.debug("Indexer(" + index + ") moves next files.");
+                logger.debug("DocSender(" + index + ") moves next files.");
             }
             final Map<String, Object> source = new HashMap<>();
             source.put(FILE_POSITION, filePosition + 1);
