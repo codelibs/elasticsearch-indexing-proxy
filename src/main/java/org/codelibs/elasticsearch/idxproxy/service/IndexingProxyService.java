@@ -31,8 +31,6 @@ import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.DocWriteResponse.Result;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
-import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
-import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.delete.DeleteRequest;
@@ -172,7 +170,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
         final String dataFileFormatStr = SETTING_INXPROXY_DATA_FILE_FORMAT.get(settings);
         if (dataFileFormatStr == null || dataFileFormatStr.length() == 0) {
-            dataFileFormat = "%s-%019d";
+            dataFileFormat = "%019d";
         } else {
             dataFileFormat = dataFileFormatStr;
         }
@@ -201,7 +199,6 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                 public void afterStart() {
                     client.admin().cluster().prepareHealth(INDEX_NAME).setWaitForYellowStatus()
                             .execute(new ActionListener<ClusterHealthResponse>() {
-
                                 @Override
                                 public void onResponse(final ClusterHealthResponse response) {
                                     if (response.isTimedOut()) {
@@ -211,9 +208,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                                         if (logger.isDebugEnabled()) {
                                             logger.debug("Created .idxproxy index.");
                                         }
-                                    }, e -> {
-                                        logger.error("Failed to create .idxproxy.", e);
-                                    }));
+                                    }, e -> logger.error("Failed to create .idxproxy.", e)));
                                 }
 
                                 @Override
@@ -227,28 +222,22 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     }
 
     private void checkIfIndexExists(final ActionListener<ActionResponse> listener) {
-        client.admin().indices().prepareExists(INDEX_NAME).execute(new ActionListener<IndicesExistsResponse>() {
-            @Override
-            public void onResponse(final IndicesExistsResponse response) {
-                if (response.isExists()) {
-                    if (logger.isDebugEnabled()) {
-                        logger.debug(INDEX_NAME + " exists.");
-                    }
-                    listener.onResponse(response);
-                } else {
-                    createIndex(listener);
+        client.admin().indices().prepareExists(INDEX_NAME).execute(wrap(response -> {
+            if (response.isExists()) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug(INDEX_NAME + " exists.");
                 }
+                listener.onResponse(response);
+            } else {
+                createIndex(listener);
             }
-
-            @Override
-            public void onFailure(final Exception e) {
-                if (e instanceof IndexNotFoundException) {
-                    createIndex(listener);
-                } else {
-                    listener.onFailure(e);
-                }
+        }, e -> {
+            if (e instanceof IndexNotFoundException) {
+                createIndex(listener);
+            } else {
+                listener.onFailure(e);
             }
-        });
+        }));
     }
 
     private void createIndex(final ActionListener<ActionResponse> listener) {
@@ -262,34 +251,16 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                     .endObject()//
                     .endObject();
             client.admin().indices().prepareCreate(INDEX_NAME).setSettings(settingsBuilder)
-                    .addMapping(TYPE_NAME, source, XContentFactory.xContentType(source)).execute(new ActionListener<CreateIndexResponse>() {
-                        @Override
-                        public void onResponse(final CreateIndexResponse response) {
-                            waitForIndex(listener);
-                        }
-
-                        @Override
-                        public void onFailure(final Exception e) {
-                            listener.onFailure(e);
-                        }
-                    });
+                    .addMapping(TYPE_NAME, source, XContentFactory.xContentType(source))
+                    .execute(wrap(response -> waitForIndex(listener), listener::onFailure));
         } catch (final IOException e) {
             listener.onFailure(e);
         }
     }
 
     private void waitForIndex(final ActionListener<ActionResponse> listener) {
-        client.admin().cluster().prepareHealth(INDEX_NAME).setWaitForYellowStatus().execute(new ActionListener<ClusterHealthResponse>() {
-            @Override
-            public void onResponse(final ClusterHealthResponse response) {
-                listener.onResponse(response);
-            }
-
-            @Override
-            public void onFailure(final Exception e) {
-                listener.onFailure(e);
-            }
-        });
+        client.admin().cluster().prepareHealth(INDEX_NAME).setWaitForYellowStatus()
+                .execute(wrap(listener::onResponse, listener::onFailure));
     }
 
     @Override
@@ -312,7 +283,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                         closeStreamOutput();
                     }
 
-                    fileId = String.format(dataFileFormat, nodeName(), res.getVersion());
+                    fileId = String.format(dataFileFormat, res.getVersion());
                     final Path outputPath = dataPath.resolve(fileId + WORKING_EXTENTION);
                     try {
                         streamOutput = new IndexingProxyStreamOutput(Files.newOutputStream(outputPath));
@@ -328,6 +299,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     }
 
     private void closeStreamOutput() {
+        if (logger.isDebugEnabled()) {
+            logger.debug("[" + fileId + "] Closing streamOutput.");
+        }
         try {
             streamOutput.flush();
             streamOutput.close();
@@ -347,13 +321,16 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                 logger.debug("No requests in file. Skipped renew action.");
             }
             listener.onResponse(null);
-        }else {
+        } else {
             createStreamOutput(listener);
         }
     }
 
     public <Request extends ActionRequest, Response extends ActionResponse> void write(final Request request,
             final ActionListener<Response> listener) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Writing request " + request.toString());
+        }
         final ActionListener<Response> next = wrap(res -> {
             final short classType = getClassType(request);
             if (classType > 0) {
@@ -388,6 +365,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         } else if (BulkRequest.class.isInstance(request)) {
             return TYPE_BULK;
         }
+        if (logger.isDebugEnabled()) {
+            logger.debug("Unknown request: " + request);
+        }
         return 0;
     }
 
@@ -396,6 +376,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     }
 
     public void startIndexer(final String index, final long filePosition, final ActionListener<Map<String, Object>> listener) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Starting Indexer(" + index + ")");
+        }
         client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
@@ -415,6 +398,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
     private void launchIndexer(final String index, final long filePosition, final long version,
             final ActionListener<Map<String, Object>> listener) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Launching Indexer(" + index + ")");
+        }
         final Map<String, Object> source = new HashMap<>();
         source.put(NODE_NAME, nodeName());
         source.put(FILE_POSITION, filePosition);
@@ -437,6 +423,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     }
 
     public void stopIndexer(final String index, final ActionListener<Map<String, Object>> listener) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Stopping Indexer(" + index + ")");
+        }
         client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
             final Map<String, Object> params = new HashMap<>();
             if (res.isExists()) {
@@ -519,6 +508,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
         @Override
         public void run() {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Running Indexer(" + index + ")");
+            }
             client.prepareGet(INDEX_NAME, TYPE_NAME, index).execute(wrap(res -> {
                 if (res.isExists()) {
                     final Map<String, Object> source = res.getSourceAsMap();
@@ -562,7 +554,10 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }
 
         private void process(final long filePosition) {
-            path = dataPath.resolve(String.format(dataFileFormat, nodeName(), filePosition) + DATA_EXTENTION);
+            if (logger.isDebugEnabled()) {
+                logger.debug("Indexer(" + index + ") processes " + filePosition);
+            }
+            path = dataPath.resolve(String.format(dataFileFormat, filePosition) + DATA_EXTENTION);
             if (path.toFile().exists()) {
                 logger.info("[{}][{}] Indexing from {}", filePosition, version, path.toAbsolutePath());
                 try {
@@ -583,6 +578,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
         private void processRequests(final StreamInput streamInput) {
             try {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Indexer(" + index + ") is processing requests.");
+                }
                 if (streamInput.available() > 0) {
                     final short classType = streamInput.readShort();
                     switch (classType) {
@@ -621,6 +619,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }
 
         private void processNext() {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Indexer(" + index + ") moves next files.");
+            }
             final Map<String, Object> source = new HashMap<>();
             source.put(FILE_POSITION, filePosition + 1);
             source.put(TIMESTAMP, new Date());

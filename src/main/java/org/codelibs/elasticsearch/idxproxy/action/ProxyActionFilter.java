@@ -61,8 +61,8 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
     }
 
     @SuppressWarnings("unchecked")
-    private <Request extends ActionRequest, Response extends ActionResponse> Supplier<Response> getExecutor(final Task task, final String action,
-            final Request request) {
+    private <Request extends ActionRequest, Response extends ActionResponse> Supplier<Response> getExecutor(final Task task,
+            final String action, final Request request) {
         if (BulkAction.NAME.equals(action)) {
             final long startTime = System.nanoTime();
             int count = 0;
@@ -155,9 +155,11 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
     }
 
     @Override
-    public <Request extends ActionRequest, Response extends ActionResponse> void apply(final Task task, final String action, final Request request,
-            final ActionListener<Response> listener, final ActionFilterChain<Request, Response> chain) {
-        logger.info("node: " + nodeName() + ", action: " + action + ", request: " + request);
+    public <Request extends ActionRequest, Response extends ActionResponse> void apply(final Task task, final String action,
+            final Request request, final ActionListener<Response> listener, final ActionFilterChain<Request, Response> chain) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("node: " + nodeName() + ", action: " + action + ", request: " + request);
+        }
         final Supplier<Response> executor = getExecutor(task, action, request);
         if (executor != null) {
             indexingProxyService.write(request, ActionListener.wrap(res -> {
@@ -168,9 +170,9 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
                 || RefreshAction.NAME.equals(action)//
                 || UpgradeAction.NAME.equals(action)//
         ) {
-            indexingProxyService.renew(ActionListener.wrap(res->{
+            indexingProxyService.renew(ActionListener.wrap(res -> {
                 chain.proceed(task, action, request, listener);
-            },listener::onFailure));
+            }, listener::onFailure));
         } else {
             chain.proceed(task, action, request, listener);
         }

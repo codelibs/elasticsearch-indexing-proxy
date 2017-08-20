@@ -46,9 +46,7 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
             break;
         }
 
-        return channel -> {
-            sendErrorResponse(channel, new ElasticsearchException("Unknown request: " + request));
-        };
+        return channel -> sendErrorResponse(channel, new ElasticsearchException("Unknown request: " + request));
     }
 
     private RestChannelConsumer prepareGetRequest(final RestRequest request) {
@@ -57,17 +55,10 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
         final int size = request.paramAsInt("size", 10);
         return channel -> {
             if (index == null || index.trim().length() == 0) {
-                indexingProxyService.getIndexerInfos(from, size, wrap(res -> {
-                    sendResponse(channel, res);
-                }, e -> {
-                    sendErrorResponse(channel, e);
-                }));
+                indexingProxyService.getIndexerInfos(from, size,
+                        wrap(res -> sendResponse(channel, res), e -> sendErrorResponse(channel, e)));
             } else {
-                indexingProxyService.getIndexerInfo(index, wrap(res -> {
-                    sendResponse(channel, res);
-                }, e -> {
-                    sendErrorResponse(channel, e);
-                }));
+                indexingProxyService.getIndexerInfo(index, wrap(res -> sendResponse(channel, res), e -> sendErrorResponse(channel, e)));
             }
         };
     }
@@ -75,11 +66,7 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
     private RestChannelConsumer prepareDeleteRequest(final RestRequest request) {
         final String index = request.param("index");
         return channel -> {
-            indexingProxyService.stopIndexer(index, wrap(res -> {
-                sendResponse(channel, res);
-            }, e -> {
-                sendErrorResponse(channel, e);
-            }));
+            indexingProxyService.stopIndexer(index, wrap(res -> sendResponse(channel, res), e -> sendErrorResponse(channel, e)));
         };
     }
 
@@ -87,11 +74,7 @@ public class RestIndexingProxyProcessAction extends BaseRestHandler {
         final String index = request.param("index");
         final long position = request.paramAsLong("position", 0);
         return channel -> {
-            indexingProxyService.startIndexer(index, position, wrap(res -> {
-                sendResponse(channel, res);
-            }, e -> {
-                sendErrorResponse(channel, e);
-            }));
+            indexingProxyService.startIndexer(index, position, wrap(res -> sendResponse(channel, res), e -> sendErrorResponse(channel, e)));
         };
     }
 

@@ -35,16 +35,17 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
 
     @Override
     public Collection<Object> createComponents(final Client client, final ClusterService clusterService, final ThreadPool threadPool,
-            final ResourceWatcherService resourceWatcherService, final ScriptService scriptService, final NamedXContentRegistry xContentRegistry) {
+            final ResourceWatcherService resourceWatcherService, final ScriptService scriptService,
+            final NamedXContentRegistry xContentRegistry) {
         final Collection<Object> components = new ArrayList<>();
         components.add(pluginComponent);
         return components;
     }
 
     @Override
-    public List<RestHandler> getRestHandlers(final Settings settings, final RestController restController, final ClusterSettings clusterSettings,
-            final IndexScopedSettings indexScopedSettings, final SettingsFilter settingsFilter, final IndexNameExpressionResolver indexNameExpressionResolver,
-            final Supplier<DiscoveryNodes> nodesInCluster) {
+    public List<RestHandler> getRestHandlers(final Settings settings, final RestController restController,
+            final ClusterSettings clusterSettings, final IndexScopedSettings indexScopedSettings, final SettingsFilter settingsFilter,
+            final IndexNameExpressionResolver indexNameExpressionResolver, final Supplier<DiscoveryNodes> nodesInCluster) {
         return Arrays.asList(new RestIndexingProxyProcessAction(settings, restController, pluginComponent));
     }
 
