@@ -10,6 +10,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
@@ -285,12 +287,14 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
                     fileId = String.format(dataFileFormat, res.getVersion());
                     final Path outputPath = dataPath.resolve(fileId + WORKING_EXTENTION);
-                    try {
-                        streamOutput = new IndexingProxyStreamOutput(Files.newOutputStream(outputPath));
-                        logger.info("Opening " + outputPath.toAbsolutePath());
-                    } catch (final IOException e) {
-                        throw new ElasticsearchException("Could not open " + outputPath, e);
-                    }
+                    streamOutput = AccessController.doPrivileged((PrivilegedAction<IndexingProxyStreamOutput>) () -> {
+                        try {
+                            return new IndexingProxyStreamOutput(Files.newOutputStream(outputPath));
+                        } catch (final IOException e) {
+                            throw new ElasticsearchException("Could not open " + outputPath, e);
+                        }
+                    });
+                    logger.info("Opening " + outputPath.toAbsolutePath());
                 }
             }
 
@@ -305,14 +309,20 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         try {
             streamOutput.flush();
             streamOutput.close();
-
-            final Path source = dataPath.resolve(fileId + WORKING_EXTENTION);
-            final Path target = dataPath.resolve(fileId + DATA_EXTENTION);
-            final Path outputPath = Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-            logger.info("Closed " + outputPath.toAbsolutePath());
         } catch (final IOException e) {
             throw new ElasticsearchException("Failed to close streamOutput.", e);
         }
+
+        final Path source = dataPath.resolve(fileId + WORKING_EXTENTION);
+        final Path target = dataPath.resolve(fileId + DATA_EXTENTION);
+        final Path outputPath = AccessController.doPrivileged((PrivilegedAction<Path>) () -> {
+            try {
+                return Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+            } catch (final IOException e) {
+                throw new ElasticsearchException("Failed to move " + source.toAbsolutePath() + " to " + target.toAbsolutePath(), e);
+            }
+        });
+        logger.info("Closed " + outputPath.toAbsolutePath());
     }
 
     public <Response extends ActionResponse> void renew(final ActionListener<Response> listener) {
@@ -488,6 +498,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         }, listener::onFailure));
     }
 
+    private static boolean existsFile(final Path p) {
+        return AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> {
+            return p.toFile().exists();
+        });
+    }
+
     class Indexer implements Runnable {
 
         private final String index;
@@ -558,12 +574,18 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                 logger.debug("Indexer(" + index + ") processes " + filePosition);
             }
             path = dataPath.resolve(String.format(dataFileFormat, filePosition) + DATA_EXTENTION);
-            if (path.toFile().exists()) {
+            if (existsFile(path)) {
                 logger.info("[{}][{}] Indexing from {}", filePosition, version, path.toAbsolutePath());
                 try {
-                    processRequests(new IndexingProxyStreamInput(Files.newInputStream(path), namedWriteableRegistry));
+                    processRequests(AccessController.doPrivileged((PrivilegedAction<IndexingProxyStreamInput>) () -> {
+                        try {
+                            return new IndexingProxyStreamInput(Files.newInputStream(path), namedWriteableRegistry);
+                        } catch (IOException e) {
+                            throw new ElasticsearchException("Failed to read " + path.toAbsolutePath(), e);
+                        }
+                    }));
                     // continue
-                } catch (final IOException e) {
+                } catch (final Exception e) {
                     retryWithError("Failed to access " + path.toAbsolutePath(), e);
                     // retry
                 }
