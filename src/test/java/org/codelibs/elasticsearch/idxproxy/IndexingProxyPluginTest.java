@@ -67,7 +67,7 @@ public class IndexingProxyPluginTest extends TestCase {
     public void test_indexing() throws Exception {
         setUp((number, settingsBuilder) -> {
             settingsBuilder.put("idxproxy.data.path", dataDir.getAbsolutePath());
-            settingsBuilder.put("idxproxy.indexer.interval", "1s");
+            settingsBuilder.put("idxproxy.sender.interval", "1s");
             settingsBuilder.putArray("idxproxy.target.indices", "sample");
         });
 

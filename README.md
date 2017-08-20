@@ -29,15 +29,15 @@ Not released yet.
 
 This plugin has the following settings.
 
-| Setting                               | Type    | Default      | Description                   |
-|:--------------------------------------|:-------:|:------------:|:------------------------------|
-| idxproxy.data.path                    | string  | es.data.path | directory to store data file  |
-| idxproxy.target.indices               | string  | none         | target indices                |
-| idxproxy.data.file\_size              | size    | 100m         | file size                     |
-| idxproxy.indexer.interval             | time    | 30s          | interval to check file        |
-| idxproxy.indexer.retry\_count         | int     | 10           | retry count for error file    |
-| idxproxy.indexer.request.retry\_count | int     | 3            | retry count for error request |
-| idxproxy.indexer.skip.error\_file     | boolean | true         | skip error file               |
+| Setting                              | Type    | Default      | Description                   |
+|:-------------------------------------|:-------:|:------------:|:------------------------------|
+| idxproxy.data.path                   | string  | es.data.path | directory to store data file  |
+| idxproxy.target.indices              | string  | none         | target indices                |
+| idxproxy.data.file\_size             | size    | 100m         | file size                     |
+| idxproxy.sender.interval             | time    | 30s          | interval to check file        |
+| idxproxy.sender.retry\_count         | int     | 10           | retry count for error file    |
+| idxproxy.sender.request.retry\_count | int     | 3            | retry count for error request |
+| idxproxy.sender.skip.error\_file     | boolean | true         | skip error file               |
 
 For example, put settings as below:
 
