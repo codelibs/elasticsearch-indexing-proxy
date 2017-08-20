@@ -80,7 +80,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
 
     private static final String NODE_NAME = "node_name";
 
-    private static final String FILE_MAPPING_JSON = "idxproxy/file_mapping.json";
+    private static final String FILE_MAPPING_JSON = "idxproxy/mapping.json";
 
     private static final String INDEX_NAME = ".idxproxy";
 
