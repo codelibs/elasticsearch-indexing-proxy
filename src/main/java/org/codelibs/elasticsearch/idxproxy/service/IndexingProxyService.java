@@ -125,6 +125,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     public static final Setting<Boolean> SETTING_INXPROXY_INDEXER_SKIP_ERROR_FILE =
             Setting.boolSetting("idxproxy.indexer.skip.error_file", true, Property.NodeScope);
 
+    public static final Setting<Boolean> SETTING_INXPROXY_INDEXER_FLUSH_PER_DOC =
+            Setting.boolSetting("idxproxy.indexer.flush_per_doc", true, Property.NodeScope);
+
     private final Client client;
 
     private final ClusterService clusterService;
@@ -152,6 +155,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
     private final boolean indexerSkipErrorFile;
 
     private final int indexerRequestRetryCount;
+
+    private final boolean flushPerDoc;
 
     @Inject
     public IndexingProxyService(final Settings settings, final Environment env, final Client client, final ClusterService clusterService,
@@ -183,6 +188,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
         indexerRetryCount = SETTING_INXPROXY_INDEXER_RETRY_COUNT.get(settings);
         indexerRequestRetryCount = SETTING_INXPROXY_INDEXER_REQUEST_RETRY_COUNT.get(settings);
         indexerSkipErrorFile = SETTING_INXPROXY_INDEXER_SKIP_ERROR_FILE.get(settings);
+        flushPerDoc = SETTING_INXPROXY_INDEXER_FLUSH_PER_DOC.get(settings);
 
         for (final ActionFilter filter : filters.filters()) {
             if (filter instanceof ProxyActionFilter) {
@@ -347,6 +353,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent {
                 synchronized (this) {
                     streamOutput.writeShort(classType);
                     request.writeTo(streamOutput);
+                    if (flushPerDoc) {
+                        streamOutput.flush();
+                    }
                 }
             } else {
                 throw new ElasticsearchException("Unknown request: " + request);

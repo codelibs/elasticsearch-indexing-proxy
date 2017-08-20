@@ -63,6 +63,7 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
                 IndexingProxyService.SETTING_INXPROXY_INDEXER_RETRY_COUNT, //
                 IndexingProxyService.SETTING_INXPROXY_INDEXER_REQUEST_RETRY_COUNT, //
                 IndexingProxyService.SETTING_INXPROXY_INDEXER_SKIP_ERROR_FILE, //
+                IndexingProxyService.SETTING_INXPROXY_INDEXER_FLUSH_PER_DOC, //
                 IndexingProxyService.SETTING_INXPROXY_TARGET_INDICES);
     }
 
