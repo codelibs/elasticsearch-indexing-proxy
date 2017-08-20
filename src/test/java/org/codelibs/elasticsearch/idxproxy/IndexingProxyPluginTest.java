@@ -109,19 +109,7 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals(1, ((Integer) map.get("file_position")).intValue());
         }
 
-        for (int i = 0; i < 10; i++) {
-            try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search")
-                    .header("Content-Type", "application/json").body("{\"query\":{\"match_all\":{}}}").execute()) {
-                final Map<String, Object> map = curlResponse.getContentAsMap();
-                Map<String, Object> hits = (Map<String, Object>) map.get("hits");
-                if (((Number) hits.get("total")).longValue() == 5) {
-                    break;
-                }
-            }
-            Thread.sleep(1000L);
-        }
-
-        runner.refresh();
+        waitForNdocs(node, index1, type, 5);
 
         try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search").header("Content-Type", "application/json")
                 .body("{\"query\":{\"match_all\":{}},\"sort\":[{\"id\":{\"order\":\"asc\"}}]}").execute()) {
@@ -137,14 +125,117 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
         }
 
-        try (CurlResponse curlResponse = Curl.get(node, "/.idxproxy/config/sample1").header("Content-Type", "application/json").execute()) {
+        checkFilePosition(node, index1, 2);
+
+        // send requests to data file
+        indexRequest(node, alias, type, 2000);
+        createRequest(node, alias, type, 2001);
+        updateRequest(node, alias, type, 2001);
+        createRequest(node, alias, type, 2002);
+        updateByQueryRequest(node, alias, type, 2002);
+        createRequest(node, alias, type, 2003);
+        deleteRequest(node, alias, type, 2003);
+        createRequest(node, alias, type, 2004);
+        deleteByQueryRequest(node, alias, type, 2004);
+        bulkRequest(node, alias, type, 2005);
+
+        try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search").header("Content-Type", "application/json")
+                .body("{\"query\":{\"match_all\":{}}}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
-            assertEquals(2, ((Number) ((Map<String, Object>) map.get("_source")).get("file_position")).longValue());
+            Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+            assertEquals(5, ((Number) hits.get("total")).longValue());
         }
+
+        checkFilePosition(node, index1, 2);
+
+        // flush data file
+        runner.refresh();
+
+        waitForNdocs(node, index1, type, 10);
+
+        try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search").header("Content-Type", "application/json")
+                .body("{\"query\":{\"match_all\":{}},\"sort\":[{\"id\":{\"order\":\"asc\"}}]}").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+            assertEquals(10, ((Number) hits.get("total")).longValue());
+            List<Map<String, Object>> list = (List<Map<String, Object>>) hits.get("hits");
+            assertEquals("test 1000", ((Map<String, Object>) list.get(0).get("_source")).get("msg"));
+            assertEquals("test 1101", ((Map<String, Object>) list.get(1).get("_source")).get("msg"));
+            assertEquals("test 1202", ((Map<String, Object>) list.get(2).get("_source")).get("msg"));
+            assertEquals("test 1005", ((Map<String, Object>) list.get(3).get("_source")).get("msg"));
+            assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
+            assertEquals("test 2000", ((Map<String, Object>) list.get(5).get("_source")).get("msg"));
+            assertEquals("test 2101", ((Map<String, Object>) list.get(6).get("_source")).get("msg"));
+            assertEquals("test 2202", ((Map<String, Object>) list.get(7).get("_source")).get("msg"));
+            assertEquals("test 2005", ((Map<String, Object>) list.get(8).get("_source")).get("msg"));
+            assertEquals("test 2306", ((Map<String, Object>) list.get(9).get("_source")).get("msg"));
+        }
+
+        checkFilePosition(node, index1, 3);
 
         final String index2 = "sample2";
         runner.createIndex(index2, Settings.builder().build());
+        runner.ensureYellow(index2);
+
+        try (CurlResponse curlResponse =
+                Curl.post(node, "/" + index2 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(1, ((Integer) map.get("file_position")).intValue());
+        }
+
+        waitForNdocs(node, index2, type, 10);
+
+        try (CurlResponse curlResponse = Curl.post(node, "/" + index2 + "/" + type + "/_search").header("Content-Type", "application/json")
+                .body("{\"query\":{\"match_all\":{}},\"sort\":[{\"id\":{\"order\":\"asc\"}}]}").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+            assertEquals(10, ((Number) hits.get("total")).longValue());
+            List<Map<String, Object>> list = (List<Map<String, Object>>) hits.get("hits");
+            assertEquals("test 1000", ((Map<String, Object>) list.get(0).get("_source")).get("msg"));
+            assertEquals("test 1101", ((Map<String, Object>) list.get(1).get("_source")).get("msg"));
+            assertEquals("test 1202", ((Map<String, Object>) list.get(2).get("_source")).get("msg"));
+            assertEquals("test 1005", ((Map<String, Object>) list.get(3).get("_source")).get("msg"));
+            assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
+            assertEquals("test 2000", ((Map<String, Object>) list.get(5).get("_source")).get("msg"));
+            assertEquals("test 2101", ((Map<String, Object>) list.get(6).get("_source")).get("msg"));
+            assertEquals("test 2202", ((Map<String, Object>) list.get(7).get("_source")).get("msg"));
+            assertEquals("test 2005", ((Map<String, Object>) list.get(8).get("_source")).get("msg"));
+            assertEquals("test 2306", ((Map<String, Object>) list.get(9).get("_source")).get("msg"));
+        }
+    }
+
+    private void waitForNdocs(Node node, final String index1, final String type, final long num) throws Exception {
+        for (int i = 0; i < 10; i++) {
+            try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search")
+                    .header("Content-Type", "application/json").body("{\"query\":{\"match_all\":{}}}").execute()) {
+                final Map<String, Object> map = curlResponse.getContentAsMap();
+                @SuppressWarnings("unchecked")
+                Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+                if (((Number) hits.get("total")).longValue() == num) {
+                    Thread.sleep(3000L); // wait for bulk requests
+                    return;
+                }
+            }
+            runner.refresh();
+            Thread.sleep(1000L);
+        }
+        fail(num + " docs are not inserted.");
+    }
+
+    private void checkFilePosition(Node node, final String index, final int position) throws IOException {
+        try (CurlResponse curlResponse =
+                Curl.get(node, "/.idxproxy/config/" + index).header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> source = (Map<String, Object>) map.get("_source");
+            assertEquals(position, ((Number) source.get("file_position")).longValue());
+        }
     }
 
     private void bulkRequest(Node node, final String index, final String type, final long id) throws IOException {
