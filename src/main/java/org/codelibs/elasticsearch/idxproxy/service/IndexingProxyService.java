@@ -316,9 +316,20 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                             });
                             threadPool.schedule(monitorInterval, Names.GENERIC, this);
                         }, e -> {
-                            logger.warn("Failed to process Monitor(" + nodeName() + ")", e);
+                            if (e instanceof IndexNotFoundException) {
+                                if (logger.isDebugEnabled()) {
+                                    logger.debug(INDEX_NAME + " is not found.", e);
+                                }
+                            } else {
+                                logger.warn("Failed to process Monitor(" + nodeName() + ")", e);
+                            }
                             threadPool.schedule(monitorInterval, Names.GENERIC, this);
                         }));
+            } catch (final IndexNotFoundException e) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug(INDEX_NAME + " is not found.", e);
+                }
+                threadPool.schedule(monitorInterval, Names.GENERIC, this);
             } catch (final Exception e) {
                 logger.warn("Failed to process Monitor(" + nodeName() + ")", e);
                 threadPool.schedule(monitorInterval, Names.GENERIC, this);
@@ -631,14 +642,19 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     public void getDocSenderInfos(final int from, final int size, final ActionListener<Map<String, Object>> listener) {
-        client.prepareSearch(INDEX_NAME).setQuery(QueryBuilders.matchAllQuery()).setFrom(from).setSize(size).execute(wrap(res -> {
-            final Map<String, Object> params = new HashMap<>();
-            params.put("took_in_millis", res.getTookInMillis());
-            params.put("senders", Arrays.stream(res.getHits().getHits()).map(hit -> {
-                return hit.getSource();
-            }).toArray(n -> new Map[n]));
-            listener.onResponse(params);
-        }, listener::onFailure));
+        client.prepareSearch(INDEX_NAME).setQuery(QueryBuilders.termQuery(DOC_TYPE, "index")).setFrom(from).setSize(size)
+                .execute(wrap(res -> {
+                    final Map<String, Object> params = new HashMap<>();
+                    params.put("took_in_millis", res.getTookInMillis());
+                    params.put("senders", Arrays.stream(res.getHits().getHits()).map(hit -> {
+                        final Map<String, Object> source = new HashMap<>();
+                        source.putAll(hit.getSource());
+                        final DocSender docSender = docSenderMap.get(hit.getId());
+                        source.put("running", docSender != null && docSender.isRunning());
+                        return source;
+                    }).toArray(n -> new Map[n]));
+                    listener.onResponse(params);
+                }, listener::onFailure));
     }
 
     public void getDocSenderInfo(final String index, final ActionListener<Map<String, Object>> listener) {
@@ -648,6 +664,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 final Map<String, Object> source = res.getSourceAsMap();
                 params.putAll(source);
                 params.put("found", true);
+                final DocSender docSender = docSenderMap.get(res.getId());
+                params.put("running", docSender != null && docSender.isRunning());
             } else {
                 params.put("found", false);
             }
