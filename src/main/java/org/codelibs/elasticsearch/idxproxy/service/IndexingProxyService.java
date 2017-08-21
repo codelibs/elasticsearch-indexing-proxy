@@ -12,6 +12,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
@@ -146,6 +147,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     public static final Setting<TimeValue> SETTING_INXPROXY_MONITOR_INTERVAL =
             Setting.timeSetting("idxproxy.monitor.interval", TimeValue.timeValueMinutes(1), Property.NodeScope);
 
+    public static final Setting<List<String>> SETTING_INXPROXY_MONITOR_SENDER_NODES =
+            Setting.listSetting("idxproxy.monitor.sender_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
+
     public static final Setting<Boolean> SETTING_INXPROXY_FLUSH_PER_DOC =
             Setting.boolSetting("idxproxy.flush_per_doc", true, Property.NodeScope);
 
@@ -185,6 +189,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     private final TimeValue monitorInterval;
 
+    private final List<String> monitorSenderNodes;
+
     private final Map<String, DocSender> docSenderMap = new ConcurrentHashMap<>();
 
     private final AtomicBoolean isMasterNode = new AtomicBoolean(false);
@@ -223,6 +229,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         flushPerDoc = SETTING_INXPROXY_FLUSH_PER_DOC.get(settings);
         senderAliveTime = SETTING_INXPROXY_SENDER_ALIVE_TIME.get(settings);
         monitorInterval = SETTING_INXPROXY_MONITOR_INTERVAL.get(settings);
+        monitorSenderNodes = SETTING_INXPROXY_MONITOR_SENDER_NODES.get(settings);
 
         for (final ActionFilter filter : filters.filters()) {
             if (filter instanceof ProxyActionFilter) {
@@ -251,6 +258,23 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     class Monitor implements Runnable {
 
+        private String getOtherNode(final String nodeName, final Map<String, DiscoveryNode> nodeMap) {
+            final List<String> list = new ArrayList<>();
+            for (final String name : monitorSenderNodes) {
+                if (nodeMap.containsKey(name)) {
+                    list.add(name);
+                }
+            }
+            list.remove(nodeName);
+            if (list.isEmpty()) {
+                return "";
+            } else if (list.size() == 1) {
+                return list.get(0);
+            }
+            Collections.shuffle(list);
+            return list.get(0);
+        }
+
         @Override
         public void run() {
             if (!isMasterNode.get()) {
@@ -274,8 +298,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                                 final String nodeName = (String) source.get(NODE_NAME);
                                 final DiscoveryNode node = nodeMap.get(nodeName);
                                 if (node == null) {
-                                    updateDocSenderInfo(index, "", 0, wrap(res -> {
-                                        logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
+                                    final String otherNode = getOtherNode(nodeName, nodeMap);
+                                    updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
+                                        if (otherNode.length() == 0) {
+                                            logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
+                                        } else {
+                                            logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender(" + index + ")");
+                                        }
                                     }, e -> {
                                         logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e);
                                     }));
@@ -300,8 +329,14 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                                                 @Override
                                                 public void handleException(final TransportException e) {
                                                     logger.warn("Failed to start DocSender(" + index + ") in " + nodeName, e);
-                                                    updateDocSenderInfo(index, "", 0, wrap(res -> {
-                                                        logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
+                                                    final String otherNode = getOtherNode(nodeName, nodeMap);
+                                                    updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
+                                                        if (otherNode.length() == 0) {
+                                                            logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
+                                                        } else {
+                                                            logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender("
+                                                                    + index + ")");
+                                                        }
                                                     }, e1 -> {
                                                         logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e1);
                                                     }));
