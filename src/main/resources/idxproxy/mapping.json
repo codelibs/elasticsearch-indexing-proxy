@@ -7,6 +7,9 @@
       "enabled": false
     },
     "properties": {
+      "doc_type": {
+        "type": "keyword"
+      },
       "file_position": {
         "type": "long"
       },
