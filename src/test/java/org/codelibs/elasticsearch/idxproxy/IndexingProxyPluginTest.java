@@ -219,6 +219,85 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals("test 2005", ((Map<String, Object>) list.get(8).get("_source")).get("msg"));
             assertEquals("test 2306", ((Map<String, Object>) list.get(9).get("_source")).get("msg"));
         }
+
+        try (CurlResponse curlResponse =
+                Curl.delete(node1, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+        }
+
+        checkFilePosition(node1, index1, 3);
+
+        // send requests to data file
+        indexRequest(node1, alias, type, 3000);
+        createRequest(node1, alias, type, 3001);
+        updateRequest(node1, alias, type, 3001);
+        createRequest(node1, alias, type, 3002);
+        updateByQueryRequest(node1, alias, type, 3002);
+        createRequest(node1, alias, type, 3003);
+        deleteRequest(node1, alias, type, 3003);
+        createRequest(node1, alias, type, 3004);
+        deleteByQueryRequest(node1, alias, type, 3004);
+        bulkRequest(node1, alias, type, 3005);
+
+        try (CurlResponse curlResponse = Curl.post(node1, "/" + index1 + "/" + type + "/_search").header("Content-Type", "application/json")
+                .body("{\"query\":{\"match_all\":{}}}").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            final Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+            assertEquals(10, ((Number) hits.get("total")).longValue());
+        }
+
+        checkFilePosition(node1, index1, 3);
+
+        // flush data file
+        runner.refresh();
+
+        waitForNdocs(node1, index2, type, 15);
+
+        try (CurlResponse curlResponse = Curl.post(node1, "/" + index1 + "/" + type + "/_search").header("Content-Type", "application/json")
+                .body("{\"query\":{\"match_all\":{}},\"sort\":[{\"id\":{\"order\":\"asc\"}}]}").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            final Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+            assertEquals(10, ((Number) hits.get("total")).longValue());
+            final List<Map<String, Object>> list = (List<Map<String, Object>>) hits.get("hits");
+            assertEquals("test 1000", ((Map<String, Object>) list.get(0).get("_source")).get("msg"));
+            assertEquals("test 1101", ((Map<String, Object>) list.get(1).get("_source")).get("msg"));
+            assertEquals("test 1202", ((Map<String, Object>) list.get(2).get("_source")).get("msg"));
+            assertEquals("test 1005", ((Map<String, Object>) list.get(3).get("_source")).get("msg"));
+            assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
+            assertEquals("test 2000", ((Map<String, Object>) list.get(5).get("_source")).get("msg"));
+            assertEquals("test 2101", ((Map<String, Object>) list.get(6).get("_source")).get("msg"));
+            assertEquals("test 2202", ((Map<String, Object>) list.get(7).get("_source")).get("msg"));
+            assertEquals("test 2005", ((Map<String, Object>) list.get(8).get("_source")).get("msg"));
+            assertEquals("test 2306", ((Map<String, Object>) list.get(9).get("_source")).get("msg"));
+        }
+
+        try (CurlResponse curlResponse = Curl.post(node2, "/" + index2 + "/" + type + "/_search").header("Content-Type", "application/json")
+                .body("{\"query\":{\"match_all\":{}},\"sort\":[{\"id\":{\"order\":\"asc\"}}]}").param("size", "20").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            final Map<String, Object> hits = (Map<String, Object>) map.get("hits");
+            assertEquals(15, ((Number) hits.get("total")).longValue());
+            final List<Map<String, Object>> list = (List<Map<String, Object>>) hits.get("hits");
+            assertEquals("test 1000", ((Map<String, Object>) list.get(0).get("_source")).get("msg"));
+            assertEquals("test 1101", ((Map<String, Object>) list.get(1).get("_source")).get("msg"));
+            assertEquals("test 1202", ((Map<String, Object>) list.get(2).get("_source")).get("msg"));
+            assertEquals("test 1005", ((Map<String, Object>) list.get(3).get("_source")).get("msg"));
+            assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
+            assertEquals("test 2000", ((Map<String, Object>) list.get(5).get("_source")).get("msg"));
+            assertEquals("test 2101", ((Map<String, Object>) list.get(6).get("_source")).get("msg"));
+            assertEquals("test 2202", ((Map<String, Object>) list.get(7).get("_source")).get("msg"));
+            assertEquals("test 2005", ((Map<String, Object>) list.get(8).get("_source")).get("msg"));
+            assertEquals("test 2306", ((Map<String, Object>) list.get(9).get("_source")).get("msg"));
+            assertEquals("test 3000", ((Map<String, Object>) list.get(10).get("_source")).get("msg"));
+            assertEquals("test 3101", ((Map<String, Object>) list.get(11).get("_source")).get("msg"));
+            assertEquals("test 3202", ((Map<String, Object>) list.get(12).get("_source")).get("msg"));
+            assertEquals("test 3005", ((Map<String, Object>) list.get(13).get("_source")).get("msg"));
+            assertEquals("test 3306", ((Map<String, Object>) list.get(14).get("_source")).get("msg"));
+        }
     }
 
     private void waitForNdocs(final Node node, final String index1, final String type, final long num) throws Exception {
