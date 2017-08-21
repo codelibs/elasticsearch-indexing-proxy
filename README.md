@@ -9,9 +9,7 @@ Moreover, Document Sender provided by this plugin reads the files and sends them
 
 ## Version
 
-| Version   | Tested on Elasticsearch |
-|:---------:|:-----------------------:|
-| master    | 5.5.X                   |
+[Versions in Maven Repository](http://central.maven.org/maven2/org/codelibs/elasticsearch-indexing-proxy/)
 
 ### Issues/Questions
 
