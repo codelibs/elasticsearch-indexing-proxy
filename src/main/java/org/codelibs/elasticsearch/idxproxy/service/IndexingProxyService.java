@@ -31,6 +31,9 @@ import org.codelibs.elasticsearch.idxproxy.action.PingRequest;
 import org.codelibs.elasticsearch.idxproxy.action.PingRequestHandler;
 import org.codelibs.elasticsearch.idxproxy.action.PingResponse;
 import org.codelibs.elasticsearch.idxproxy.action.ProxyActionFilter;
+import org.codelibs.elasticsearch.idxproxy.action.WriteRequest;
+import org.codelibs.elasticsearch.idxproxy.action.WriteRequestHandler;
+import org.codelibs.elasticsearch.idxproxy.action.WriteResponse;
 import org.codelibs.elasticsearch.idxproxy.stream.IndexingProxyStreamInput;
 import org.codelibs.elasticsearch.idxproxy.stream.IndexingProxyStreamOutput;
 import org.elasticsearch.ElasticsearchException;
@@ -87,6 +90,8 @@ import org.elasticsearch.transport.TransportService;
 public class IndexingProxyService extends AbstractLifecycleComponent implements LocalNodeMasterListener {
 
     public static final String ACTION_IDXPROXY_PING = "internal:indices/idxproxy/ping";
+
+    public static final String ACTION_IDXPROXY_WRITE = "internal:indices/idxproxy/write";
 
     private static final String DOC_TYPE = "doc_type";
 
@@ -147,8 +152,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     public static final Setting<TimeValue> SETTING_INXPROXY_MONITOR_INTERVAL =
             Setting.timeSetting("idxproxy.monitor.interval", TimeValue.timeValueMinutes(1), Property.NodeScope);
 
-    public static final Setting<List<String>> SETTING_INXPROXY_MONITOR_SENDER_NODES =
-            Setting.listSetting("idxproxy.monitor.sender_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
+    public static final Setting<List<String>> SETTING_INXPROXY_SENDER_NODES =
+            Setting.listSetting("idxproxy.sender_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
+
+    public static final Setting<List<String>> SETTING_INXPROXY_WRITE_NODES =
+            Setting.listSetting("idxproxy.writer_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
 
     public static final Setting<Boolean> SETTING_INXPROXY_FLUSH_PER_DOC =
             Setting.boolSetting("idxproxy.flush_per_doc", true, Property.NodeScope);
@@ -189,7 +197,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     private final TimeValue monitorInterval;
 
-    private final List<String> monitorSenderNodes;
+    private final List<String> senderNodes;
+
+    private final List<String> writerNodes;
 
     private final Map<String, DocSender> docSenderMap = new ConcurrentHashMap<>();
 
@@ -229,7 +239,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         flushPerDoc = SETTING_INXPROXY_FLUSH_PER_DOC.get(settings);
         senderAliveTime = SETTING_INXPROXY_SENDER_ALIVE_TIME.get(settings);
         monitorInterval = SETTING_INXPROXY_MONITOR_INTERVAL.get(settings);
-        monitorSenderNodes = SETTING_INXPROXY_MONITOR_SENDER_NODES.get(settings);
+        senderNodes = SETTING_INXPROXY_SENDER_NODES.get(settings);
+        writerNodes = SETTING_INXPROXY_WRITE_NODES.get(settings);
 
         for (final ActionFilter filter : filters.filters()) {
             if (filter instanceof ProxyActionFilter) {
@@ -241,6 +252,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
         transportService.registerRequestHandler(ACTION_IDXPROXY_PING, PingRequest::new, ThreadPool.Names.GENERIC,
                 new PingRequestHandler(this));
+        transportService.registerRequestHandler(ACTION_IDXPROXY_WRITE, WriteRequest::new, ThreadPool.Names.GENERIC,
+                new WriteRequestHandler<>(this));
 
         pluginComponent.setIndexingProxyService(this);
     }
@@ -260,7 +273,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
         private String getOtherNode(final String nodeName, final Map<String, DiscoveryNode> nodeMap) {
             final List<String> list = new ArrayList<>();
-            for (final String name : monitorSenderNodes) {
+            for (final String name : senderNodes) {
                 if (nodeMap.containsKey(name)) {
                     list.add(name);
                 }
@@ -460,11 +473,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
     }
 
-    private <Response extends ActionResponse> void createStreamOutput(final ActionListener<Response> listener) {
+    private <Response extends ActionResponse> void createStreamOutput(final ActionListener<Response> listener, final boolean create) {
         final String oldFileId = fileId;
         final Map<String, Object> source = new HashMap<>();
         source.put(DOC_TYPE, "file_id");
-        client.prepareIndex(INDEX_NAME, TYPE_NAME, "file_id").setSource(source).execute(wrap(res -> {
+        source.put(NODE_NAME, nodeName());
+        client.prepareIndex(INDEX_NAME, TYPE_NAME, "file_id").setCreate(create).setSource(source).execute(wrap(res -> {
             synchronized (this) {
                 if (oldFileId == null || oldFileId.equals(fileId)) {
                     if (streamOutput != null) {
@@ -518,7 +532,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
             listener.onResponse(null);
         } else {
-            createStreamOutput(listener);
+            createStreamOutput(listener, false);
         }
     }
 
@@ -527,6 +541,78 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         if (logger.isDebugEnabled()) {
             logger.debug("Writing request " + request.toString());
         }
+
+        client.prepareGet(INDEX_NAME, TYPE_NAME, "file_id").execute(wrap(res -> {
+            final Map<String, Object> source = res.getSourceAsMap();
+            final String nodeName = (String) source.get(NODE_NAME);
+            if (nodeName().equals(nodeName)) {
+                writeOnLocal(request, listener);
+            } else {
+                writeOnRemote(nodeName, request, listener);
+            }
+        }, e -> {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Failed to get file_id.", e);
+            }
+            createStreamOutput(wrap(res -> {
+                write(request, listener);
+            }, listener::onFailure), true);
+        }));
+    }
+
+    private <Request extends ActionRequest, Response extends ActionResponse> void writeOnRemote(final String nodeName,
+            final Request request, final ActionListener<Response> listener) {
+        final List<DiscoveryNode> nodeList = new ArrayList<>();
+        clusterService.state().nodes().getNodes().valuesIt().forEachRemaining(node -> {
+            if (writerNodes.isEmpty() || writerNodes.contains(node.getName())) {
+                nodeList.add(node);
+            }
+        });
+
+        int nodeIdx = -1;
+        for (int i = 0; i < nodeList.size(); i++) {
+            if (nodeList.get(i).getName().equals(nodeName)) {
+                nodeIdx = i;
+                break;
+            }
+        }
+
+        transportService.sendRequest(nodeList.get(nodeIdx), ACTION_IDXPROXY_WRITE, new WriteRequest<>(request),
+                new TransportResponseHandler<WriteResponse>() {
+
+                    @Override
+                    public WriteResponse newInstance() {
+                        return new WriteResponse();
+                    }
+
+                    @Override
+                    public void handleResponse(final WriteResponse response) {
+                        if (response.isAcknowledged()) {
+                            if (logger.isDebugEnabled()) {
+                                logger.debug("Stored request in " + nodeName);
+                            }
+                            listener.onResponse(null);
+                        } else {
+                            throw new ElasticsearchException("Failed to store request: " + request);
+                        }
+                    }
+
+                    @Override
+                    public void handleException(final TransportException e) {
+                        // TODO retry?
+                        listener.onFailure(e);
+                    }
+
+                    @Override
+                    public String executor() {
+                        return ThreadPool.Names.GENERIC;
+                    }
+                });
+
+    }
+
+    public <Request extends ActionRequest, Response extends ActionResponse> void writeOnLocal(final Request request,
+            final ActionListener<Response> listener) {
         final ActionListener<Response> next = wrap(res -> {
             final short classType = getClassType(request);
             if (classType > 0) {
@@ -544,7 +630,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }, listener::onFailure);
 
         if (streamOutput == null || streamOutput.getByteCount() > dataFileSize) {
-            createStreamOutput(next);
+            createStreamOutput(next, false);
         } else {
             next.onResponse(null);
         }

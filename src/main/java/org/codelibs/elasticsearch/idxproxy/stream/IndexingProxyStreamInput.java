@@ -24,8 +24,7 @@ public class IndexingProxyStreamInput extends InputStreamStreamInput {
     }
 
     @Override
-    public <C extends NamedWriteable> C readNamedWriteable(@SuppressWarnings("unused") final Class<C> categoryClass,
-            @SuppressWarnings("unused") final String name) throws IOException {
+    public <C extends NamedWriteable> C readNamedWriteable(final Class<C> categoryClass, final String name) throws IOException {
         final Writeable.Reader<? extends C> reader = namedWriteableRegistry.getReader(categoryClass, name);
         final C c = reader.read(this);
         if (c == null) {
