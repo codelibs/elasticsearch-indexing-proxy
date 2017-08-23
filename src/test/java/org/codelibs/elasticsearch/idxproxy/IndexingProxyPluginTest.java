@@ -354,6 +354,83 @@ public class IndexingProxyPluginTest extends TestCase {
         assertSender(node3, index1, false);
     }
 
+    @SuppressWarnings("unchecked")
+    public void test_switchnodes() throws Exception {
+        setUp((number, settingsBuilder) -> {
+            settingsBuilder.put("idxproxy.sender.interval", "1s");
+            settingsBuilder.put("idxproxy.monitor.interval", "1s");
+            settingsBuilder.putArray("idxproxy.target.indices", "sample");
+            settingsBuilder.putArray("idxproxy.sender_nodes", "Node 2", "Node 3");
+            settingsBuilder.putArray("idxproxy.writer_nodes", "Node 2", "Node 3");
+        });
+
+        final Node node1 = runner.getNode(0);
+        final Node node2 = runner.getNode(1);
+        final Node node3 = runner.getNode(2);
+
+        final String alias = "sample";
+        final String index1 = "sample1";
+        final String type = "data";
+        runner.createIndex(index1, Settings.builder().build());
+        runner.updateAlias(alias, new String[] { index1 }, new String[0]);
+
+        runner.ensureYellow(".idxproxy");
+
+        System.out.println("XXXXX: 1");
+        // send requests to data file
+        indexRequest(node2, alias, type, 1000);
+        System.out.println("XXXXX: 2");
+        createRequest(node1, alias, type, 1001);
+        System.out.println("XXXXX: 3");
+        updateRequest(node1, alias, type, 1001);
+        System.out.println("XXXXX: 4");
+        createRequest(node1, alias, type, 1002);
+        System.out.println("XXXXX: 5");
+        updateByQueryRequest(node1, alias, type, 1002);
+        System.out.println("XXXXX: 6");
+        createRequest(node1, alias, type, 1003);
+        System.out.println("XXXXX: 7");
+        deleteRequest(node1, alias, type, 1003);
+        System.out.println("XXXXX: 8");
+        createRequest(node1, alias, type, 1004);
+        System.out.println("XXXXX: 9");
+        deleteByQueryRequest(node1, alias, type, 1004);
+        System.out.println("XXXXX: 10");
+        bulkRequest(node1, alias, type, 1005);
+        System.out.println("XXXXX: 11");
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        runner.refresh();
+
+        try (CurlResponse curlResponse =
+                Curl.post(node1, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            assertEquals(500, curlResponse.getHttpStatusCode());
+        }
+
+        Thread.sleep(5000L);
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        assertSender(node1, index1, false);
+        assertSender(node2, index1, false);
+        assertSender(node3, index1, false);
+
+        try (CurlResponse curlResponse =
+                Curl.post(node2, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(1, ((Integer) map.get("file_position")).intValue());
+        }
+
+        waitForNdocs(node1, index1, type, 5);
+
+        assertSender(node1, index1, false);
+        assertSender(node2, index1, true);
+        assertSender(node3, index1, false);
+    }
+
     private void assertSender(final Node node, final String index, final boolean running) throws IOException {
         try (CurlResponse curlResponse =
                 Curl.get(node, "/" + index + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
