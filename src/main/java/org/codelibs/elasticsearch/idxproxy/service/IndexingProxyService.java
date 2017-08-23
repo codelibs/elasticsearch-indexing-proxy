@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
@@ -89,6 +90,8 @@ import org.elasticsearch.transport.TransportService;
 
 public class IndexingProxyService extends AbstractLifecycleComponent implements LocalNodeMasterListener {
 
+    private static final String FILE_ID = "file_id";
+
     public static final String ACTION_IDXPROXY_PING = "internal:indices/idxproxy/ping";
 
     public static final String ACTION_IDXPROXY_WRITE = "internal:indices/idxproxy/write";
@@ -152,6 +155,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     public static final Setting<TimeValue> SETTING_INXPROXY_MONITOR_INTERVAL =
             Setting.timeSetting("idxproxy.monitor.interval", TimeValue.timeValueMinutes(1), Property.NodeScope);
 
+    public static final Setting<Integer> SETTING_INXPROXY_WRITER_RETRY_COUNT =
+            Setting.intSetting("idxproxy.writer.retry_count", 10, Property.NodeScope);
+
     public static final Setting<List<String>> SETTING_INXPROXY_SENDER_NODES =
             Setting.listSetting("idxproxy.sender_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
 
@@ -201,6 +207,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     private final List<String> writerNodes;
 
+    private final int writerRetryCount;
+
     private final Map<String, DocSender> docSenderMap = new ConcurrentHashMap<>();
 
     private final AtomicBoolean isMasterNode = new AtomicBoolean(false);
@@ -241,6 +249,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         monitorInterval = SETTING_INXPROXY_MONITOR_INTERVAL.get(settings);
         senderNodes = SETTING_INXPROXY_SENDER_NODES.get(settings);
         writerNodes = SETTING_INXPROXY_WRITE_NODES.get(settings);
+        writerRetryCount = SETTING_INXPROXY_WRITER_RETRY_COUNT.get(settings);
 
         for (final ActionFilter filter : filters.filters()) {
             if (filter instanceof ProxyActionFilter) {
@@ -476,9 +485,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     private <Response extends ActionResponse> void createStreamOutput(final ActionListener<Response> listener, final boolean create) {
         final String oldFileId = fileId;
         final Map<String, Object> source = new HashMap<>();
-        source.put(DOC_TYPE, "file_id");
+        source.put(DOC_TYPE, FILE_ID);
         source.put(NODE_NAME, nodeName());
-        client.prepareIndex(INDEX_NAME, TYPE_NAME, "file_id").setCreate(create).setSource(source).execute(wrap(res -> {
+        client.prepareIndex(INDEX_NAME, TYPE_NAME, FILE_ID).setCreate(create).setSource(source).execute(wrap(res -> {
             synchronized (this) {
                 if (oldFileId == null || oldFileId.equals(fileId)) {
                     if (streamOutput != null) {
@@ -536,32 +545,54 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
     }
 
+    private void randomWait() {
+        try {
+            Thread.sleep(ThreadLocalRandom.current().nextLong(1000L));
+        } catch (final InterruptedException e) {
+            // ignore
+        }
+    }
+
     public <Request extends ActionRequest, Response extends ActionResponse> void write(final Request request,
             final ActionListener<Response> listener) {
+        write(request, listener, 0);
+    }
+
+    private <Request extends ActionRequest, Response extends ActionResponse> void write(final Request request,
+            final ActionListener<Response> listener, final int tryCount) {
         if (logger.isDebugEnabled()) {
             logger.debug("Writing request " + request.toString());
         }
 
-        client.prepareGet(INDEX_NAME, TYPE_NAME, "file_id").execute(wrap(res -> {
-            final Map<String, Object> source = res.getSourceAsMap();
-            final String nodeName = (String) source.get(NODE_NAME);
-            if (nodeName().equals(nodeName)) {
-                writeOnLocal(request, listener);
+        client.prepareGet(INDEX_NAME, TYPE_NAME, FILE_ID).execute(wrap(res -> {
+            if (!res.isExists()) {
+                createStreamOutput(wrap(response -> {
+                    write(request, listener, tryCount + 1);
+                }, listener::onFailure), true);
             } else {
-                writeOnRemote(nodeName, request, listener);
+                final Map<String, Object> source = res.getSourceAsMap();
+                final String nodeName = (String) source.get(NODE_NAME);
+                if (nodeName().equals(nodeName)) {
+                    writeOnLocal(request, listener);
+                } else {
+                    writeOnRemote(nodeName, res.getVersion(), request, listener, tryCount);
+                }
             }
         }, e -> {
             if (logger.isDebugEnabled()) {
                 logger.debug("Failed to get file_id.", e);
             }
-            createStreamOutput(wrap(res -> {
-                write(request, listener);
-            }, listener::onFailure), true);
+            if (tryCount >= writerRetryCount) {
+                listener.onFailure(e);
+            } else {
+                randomWait();
+                write(request, listener, tryCount + 1);
+            }
         }));
     }
 
-    private <Request extends ActionRequest, Response extends ActionResponse> void writeOnRemote(final String nodeName,
-            final Request request, final ActionListener<Response> listener) {
+    private <Request extends ActionRequest, Response extends ActionResponse> void writeOnRemote(final String nodeName, final long version,
+            final Request request, final ActionListener<Response> listener, final int tryCount) {
         final List<DiscoveryNode> nodeList = new ArrayList<>();
         clusterService.state().nodes().getNodes().valuesIt().forEachRemaining(node -> {
             if (writerNodes.isEmpty() || writerNodes.contains(node.getName())) {
@@ -569,14 +600,18 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
         });
 
-        int nodeIdx = -1;
+        int pos = -1;
         for (int i = 0; i < nodeList.size(); i++) {
             if (nodeList.get(i).getName().equals(nodeName)) {
-                nodeIdx = i;
+                pos = i;
                 break;
             }
         }
+        if (pos == -1) {
+            throw new ElasticsearchException("Writer nodes are not found.");
+        }
 
+        final int nodeIdx = pos;
         transportService.sendRequest(nodeList.get(nodeIdx), ACTION_IDXPROXY_WRITE, new WriteRequest<>(request),
                 new TransportResponseHandler<WriteResponse>() {
 
@@ -599,8 +634,27 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
                     @Override
                     public void handleException(final TransportException e) {
-                        // TODO retry?
-                        listener.onFailure(e);
+                        if (tryCount >= writerRetryCount) {
+                            listener.onFailure(e);
+                        } else {
+                            final DiscoveryNode nextNode = nodeList.get((nodeIdx + 1) % nodeList.size());
+                            if (nextNode.getName().equals(nodeName)) {
+                                listener.onFailure(e);
+                            } else {
+                                final Map<String, Object> source = new HashMap<>();
+                                source.put(NODE_NAME, nextNode.getName());
+                                source.put(TIMESTAMP, new Date());
+                                client.prepareUpdate(INDEX_NAME, TYPE_NAME, FILE_ID).setVersion(version).setDoc(source)
+                                        .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
+                                            write(request, listener, tryCount + 1);
+                                        }, ex -> {
+                                            if (logger.isDebugEnabled()) {
+                                                logger.debug("Failed to update file_id.", ex);
+                                            }
+                                            write(request, listener, tryCount + 1);
+                                        }));
+                            }
+                        }
                     }
 
                     @Override
