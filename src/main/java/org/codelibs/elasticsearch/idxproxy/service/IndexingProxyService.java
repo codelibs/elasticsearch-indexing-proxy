@@ -17,16 +17,21 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.util.Strings;
 import org.codelibs.elasticsearch.idxproxy.IndexingProxyPlugin.PluginComponent;
+import org.codelibs.elasticsearch.idxproxy.action.CreateRequest;
+import org.codelibs.elasticsearch.idxproxy.action.CreateRequestHandler;
+import org.codelibs.elasticsearch.idxproxy.action.CreateResponse;
 import org.codelibs.elasticsearch.idxproxy.action.PingRequest;
 import org.codelibs.elasticsearch.idxproxy.action.PingRequestHandler;
 import org.codelibs.elasticsearch.idxproxy.action.PingResponse;
@@ -36,6 +41,7 @@ import org.codelibs.elasticsearch.idxproxy.action.WriteRequestHandler;
 import org.codelibs.elasticsearch.idxproxy.action.WriteResponse;
 import org.codelibs.elasticsearch.idxproxy.stream.IndexingProxyStreamInput;
 import org.codelibs.elasticsearch.idxproxy.stream.IndexingProxyStreamOutput;
+import org.codelibs.elasticsearch.idxproxy.util.RequestUtils;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequest;
@@ -81,6 +87,7 @@ import org.elasticsearch.index.reindex.DeleteByQueryRequestBuilder;
 import org.elasticsearch.index.reindex.UpdateByQueryAction;
 import org.elasticsearch.index.reindex.UpdateByQueryRequest;
 import org.elasticsearch.index.reindex.UpdateByQueryRequestBuilder;
+import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.threadpool.ThreadPool.Names;
 import org.elasticsearch.transport.TransportException;
@@ -88,6 +95,10 @@ import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
 public class IndexingProxyService extends AbstractLifecycleComponent implements LocalNodeMasterListener {
+
+    private static final String FILE_ID = "file_id";
+
+    public static final String ACTION_IDXPROXY_CREATE = "internal:indices/idxproxy/create";
 
     public static final String ACTION_IDXPROXY_PING = "internal:indices/idxproxy/ping";
 
@@ -107,21 +118,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     private static final String TYPE_NAME = "config";
 
+    private static final String ERROR_EXTENTION = ".err";
+
     private static final String WORKING_EXTENTION = ".tmp";
 
     private static final String DATA_EXTENTION = ".dat";
-
-    private static final short TYPE_DELETE = 1;
-
-    private static final short TYPE_DELETE_BY_QUERY = 2;
-
-    private static final short TYPE_INDEX = 3;
-
-    private static final short TYPE_UPDATE = 4;
-
-    private static final short TYPE_UPDATE_BY_QUERY = 5;
-
-    private static final short TYPE_BULK = 99;
 
     public static final Setting<String> SETTING_INXPROXY_DATA_FILE_FORMAT =
             Setting.simpleString("idxproxy.data.file.format", Property.NodeScope);
@@ -149,8 +150,14 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     public static final Setting<TimeValue> SETTING_INXPROXY_SENDER_ALIVE_TIME =
             Setting.timeSetting("idxproxy.sender.alive_time", TimeValue.timeValueMinutes(10), Property.NodeScope);
 
+    public static final Setting<Integer> SETTING_INXPROXY_SENDER_LOOKUP_FILES =
+            Setting.intSetting("idxproxy.sender.lookup_files", 1000, Property.NodeScope);
+
     public static final Setting<TimeValue> SETTING_INXPROXY_MONITOR_INTERVAL =
             Setting.timeSetting("idxproxy.monitor.interval", TimeValue.timeValueMinutes(1), Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_WRITER_RETRY_COUNT =
+            Setting.intSetting("idxproxy.writer.retry_count", 10, Property.NodeScope);
 
     public static final Setting<List<String>> SETTING_INXPROXY_SENDER_NODES =
             Setting.listSetting("idxproxy.sender_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
@@ -160,6 +167,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     public static final Setting<Boolean> SETTING_INXPROXY_FLUSH_PER_DOC =
             Setting.boolSetting("idxproxy.flush_per_doc", true, Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_NUMBER_OF_SHARDS =
+            Setting.intSetting("idxproxy.number_of_shards", 1, Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_NUMBER_OF_REPLICAS =
+            Setting.intSetting("idxproxy.number_of_replicas", 1, Property.NodeScope);
 
     private final TransportService transportService;
 
@@ -201,6 +214,14 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     private final List<String> writerNodes;
 
+    private final int writerRetryCount;
+
+    private final int senderLookupFiles;
+
+    private final int numberOfReplicas;
+
+    private final int numberOfShards;
+
     private final Map<String, DocSender> docSenderMap = new ConcurrentHashMap<>();
 
     private final AtomicBoolean isMasterNode = new AtomicBoolean(false);
@@ -238,9 +259,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         senderSkipErrorFile = SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE.get(settings);
         flushPerDoc = SETTING_INXPROXY_FLUSH_PER_DOC.get(settings);
         senderAliveTime = SETTING_INXPROXY_SENDER_ALIVE_TIME.get(settings);
+        senderLookupFiles = SETTING_INXPROXY_SENDER_LOOKUP_FILES.get(settings);
         monitorInterval = SETTING_INXPROXY_MONITOR_INTERVAL.get(settings);
         senderNodes = SETTING_INXPROXY_SENDER_NODES.get(settings);
         writerNodes = SETTING_INXPROXY_WRITE_NODES.get(settings);
+        writerRetryCount = SETTING_INXPROXY_WRITER_RETRY_COUNT.get(settings);
+        numberOfReplicas = SETTING_INXPROXY_NUMBER_OF_REPLICAS.get(settings);
+        numberOfShards = SETTING_INXPROXY_NUMBER_OF_SHARDS.get(settings);
 
         for (final ActionFilter filter : filters.filters()) {
             if (filter instanceof ProxyActionFilter) {
@@ -250,6 +275,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
         clusterService.addLocalNodeMasterListener(this);
 
+        transportService.registerRequestHandler(ACTION_IDXPROXY_CREATE, CreateRequest::new, ThreadPool.Names.GENERIC,
+                new CreateRequestHandler(this));
         transportService.registerRequestHandler(ACTION_IDXPROXY_PING, PingRequest::new, ThreadPool.Names.GENERIC,
                 new PingRequestHandler(this));
         transportService.registerRequestHandler(ACTION_IDXPROXY_WRITE, WriteRequest::new, ThreadPool.Names.GENERIC,
@@ -305,71 +332,14 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             try {
                 client.prepareSearch(INDEX_NAME).setTypes(TYPE_NAME).setQuery(QueryBuilders.termQuery(DOC_TYPE, "index")).setSize(1000)
                         .execute(wrap(response -> {
-                            Arrays.stream(response.getHits().getHits()).forEach(hit -> {
-                                final String index = hit.getId();
-                                final Map<String, Object> source = hit.getSource();
-                                final String nodeName = (String) source.get(NODE_NAME);
-                                final DiscoveryNode node = nodeMap.get(nodeName);
-                                if (node == null) {
-                                    final String otherNode = getOtherNode(nodeName, nodeMap);
-                                    updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
-                                        if (otherNode.length() == 0) {
-                                            logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
-                                        } else {
-                                            logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender(" + index + ")");
-                                        }
-                                    }, e -> {
-                                        logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e);
-                                    }));
-                                } else {
-                                    transportService.sendRequest(node, ACTION_IDXPROXY_PING, new PingRequest(index),
-                                            new TransportResponseHandler<PingResponse>() {
-
-                                                @Override
-                                                public PingResponse newInstance() {
-                                                    return new PingResponse();
-                                                }
-
-                                                @Override
-                                                public void handleResponse(final PingResponse response) {
-                                                    if (response.isAcknowledged() && !response.isFound()) {
-                                                        logger.info("Started DocSender(" + index + ") in " + nodeName);
-                                                    } else if (logger.isDebugEnabled()) {
-                                                        logger.debug("DocSender(" + index + ") is working in " + nodeName);
-                                                    }
-                                                }
-
-                                                @Override
-                                                public void handleException(final TransportException e) {
-                                                    logger.warn("Failed to start DocSender(" + index + ") in " + nodeName, e);
-                                                    final String otherNode = getOtherNode(nodeName, nodeMap);
-                                                    updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
-                                                        if (otherNode.length() == 0) {
-                                                            logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
-                                                        } else {
-                                                            logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender("
-                                                                    + index + ")");
-                                                        }
-                                                    }, e1 -> {
-                                                        logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e1);
-                                                    }));
-                                                }
-
-                                                @Override
-                                                public String executor() {
-                                                    return ThreadPool.Names.GENERIC;
-                                                }
-                                            });
-                                }
-                            });
-                            threadPool.schedule(monitorInterval, Names.GENERIC, this);
+                            checkSender(nodeMap, Arrays.asList(response.getHits().getHits()).iterator());
                         }, e -> {
                             if (e instanceof IndexNotFoundException) {
                                 if (logger.isDebugEnabled()) {
                                     logger.debug(INDEX_NAME + " is not found.", e);
                                 }
                             } else {
-                                logger.warn("Failed to process Monitor(" + nodeName() + ")", e);
+                                logger.warn("Monitor(" + nodeName() + ") could not access " + INDEX_NAME, e);
                             }
                             threadPool.schedule(monitorInterval, Names.GENERIC, this);
                         }));
@@ -381,6 +351,73 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             } catch (final Exception e) {
                 logger.warn("Failed to process Monitor(" + nodeName() + ")", e);
                 threadPool.schedule(monitorInterval, Names.GENERIC, this);
+            }
+        }
+
+        private void checkSender(final Map<String, DiscoveryNode> nodeMap, final Iterator<SearchHit> hitIter) {
+            if (!hitIter.hasNext()) {
+                threadPool.schedule(monitorInterval, Names.GENERIC, this);
+                return;
+            }
+            final SearchHit hit = hitIter.next();
+            final String index = hit.getId();
+            final Map<String, Object> source = hit.getSource();
+            final String nodeName = (String) source.get(NODE_NAME);
+            final DiscoveryNode node = nodeMap.get(nodeName);
+            if (node == null) {
+                final String otherNode = getOtherNode(nodeName, nodeMap);
+                updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
+                    if (otherNode.length() == 0) {
+                        logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
+                    } else {
+                        logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender(" + index + ")");
+                    }
+                    checkSender(nodeMap, hitIter);
+                }, e -> {
+                    logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e);
+                    checkSender(nodeMap, hitIter);
+                }));
+            } else {
+                transportService.sendRequest(node, ACTION_IDXPROXY_PING, new PingRequest(index),
+                        new TransportResponseHandler<PingResponse>() {
+
+                            @Override
+                            public PingResponse newInstance() {
+                                return new PingResponse();
+                            }
+
+                            @Override
+                            public void handleResponse(final PingResponse response) {
+                                if (response.isAcknowledged() && !response.isFound()) {
+                                    logger.info("Started DocSender(" + index + ") in " + nodeName);
+                                } else if (logger.isDebugEnabled()) {
+                                    logger.debug("DocSender(" + index + ") is working in " + nodeName);
+                                }
+                                checkSender(nodeMap, hitIter);
+                            }
+
+                            @Override
+                            public void handleException(final TransportException e) {
+                                logger.warn("Failed to start DocSender(" + index + ") in " + nodeName, e);
+                                final String otherNode = getOtherNode(nodeName, nodeMap);
+                                updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
+                                    if (otherNode.length() == 0) {
+                                        logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
+                                    } else {
+                                        logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender(" + index + ")");
+                                    }
+                                    checkSender(nodeMap, hitIter);
+                                }, e1 -> {
+                                    logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e1);
+                                    checkSender(nodeMap, hitIter);
+                                }));
+                            }
+
+                            @Override
+                            public String executor() {
+                                return ThreadPool.Names.GENERIC;
+                            }
+                        });
             }
         }
     }
@@ -446,7 +483,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             final XContentBuilder settingsBuilder = XContentFactory.jsonBuilder()//
                     .startObject()//
                     .startObject("index")//
-                    .field("number_of_replicas", 0)//
+                    .field("number_of_shards", numberOfShards)//
+                    .field("number_of_replicas", numberOfReplicas)//
                     .endObject()//
                     .endObject();
             client.admin().indices().prepareCreate(INDEX_NAME).setSettings(settingsBuilder)
@@ -473,12 +511,35 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
     }
 
-    private <Response extends ActionResponse> void createStreamOutput(final ActionListener<Response> listener, final boolean create) {
+    private <Response extends ActionResponse> void createStreamOutput(final ActionListener<Response> listener) {
+        client.prepareGet(INDEX_NAME, TYPE_NAME, FILE_ID).execute(wrap(res -> {
+            if (!res.isExists()) {
+                createStreamOutput(listener, 0);
+            } else {
+                final Map<String, Object> source = res.getSourceAsMap();
+                final String nodeName = (String) source.get(NODE_NAME);
+                if (nodeName().equals(nodeName)) {
+                    createStreamOutput(listener, res.getVersion());
+                } else {
+                    listener.onResponse(null);
+                }
+            }
+        }, listener::onFailure));
+    }
+
+    private <Response extends ActionResponse> void createStreamOutput(final ActionListener<Response> listener, final long version) {
         final String oldFileId = fileId;
         final Map<String, Object> source = new HashMap<>();
-        source.put(DOC_TYPE, "file_id");
+        source.put(DOC_TYPE, FILE_ID);
         source.put(NODE_NAME, nodeName());
-        client.prepareIndex(INDEX_NAME, TYPE_NAME, "file_id").setCreate(create).setSource(source).execute(wrap(res -> {
+        source.put(TIMESTAMP, new Date());
+        final IndexRequestBuilder builder = client.prepareIndex(INDEX_NAME, TYPE_NAME, FILE_ID);
+        if (version > 0) {
+            builder.setVersion(version);
+        } else {
+            builder.setCreate(true);
+        }
+        builder.setSource(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
             synchronized (this) {
                 if (oldFileId == null || oldFileId.equals(fileId)) {
                     if (streamOutput != null) {
@@ -526,42 +587,26 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     public <Response extends ActionResponse> void renew(final ActionListener<Response> listener) {
-        if (streamOutput != null && streamOutput.getByteCount() == 0) {
-            if (logger.isDebugEnabled()) {
-                logger.debug("No requests in file. Skipped renew action.");
-            }
-            listener.onResponse(null);
-        } else {
-            createStreamOutput(listener, false);
-        }
-    }
-
-    public <Request extends ActionRequest, Response extends ActionResponse> void write(final Request request,
-            final ActionListener<Response> listener) {
-        if (logger.isDebugEnabled()) {
-            logger.debug("Writing request " + request.toString());
-        }
-
-        client.prepareGet(INDEX_NAME, TYPE_NAME, "file_id").execute(wrap(res -> {
-            final Map<String, Object> source = res.getSourceAsMap();
-            final String nodeName = (String) source.get(NODE_NAME);
-            if (nodeName().equals(nodeName)) {
-                writeOnLocal(request, listener);
+        client.prepareGet(INDEX_NAME, TYPE_NAME, FILE_ID).execute(wrap(res -> {
+            if (res.isExists()) {
+                final Map<String, Object> source = res.getSourceAsMap();
+                final String nodeName = (String) source.get(NODE_NAME);
+                if (nodeName().equals(nodeName)) {
+                    renewOnLocal(listener);
+                } else {
+                    renewOnRemote(nodeName, listener);
+                }
             } else {
-                writeOnRemote(nodeName, request, listener);
+                if (logger.isDebugEnabled()) {
+                    logger.debug("No file_id. Skipped renew action.");
+                }
+                listener.onResponse(null);
             }
-        }, e -> {
-            if (logger.isDebugEnabled()) {
-                logger.debug("Failed to get file_id.", e);
-            }
-            createStreamOutput(wrap(res -> {
-                write(request, listener);
-            }, listener::onFailure), true);
-        }));
+        }, listener::onFailure));
     }
 
-    private <Request extends ActionRequest, Response extends ActionResponse> void writeOnRemote(final String nodeName,
-            final Request request, final ActionListener<Response> listener) {
+    private <Request extends ActionRequest, Response extends ActionResponse> void renewOnRemote(final String nodeName,
+            final ActionListener<Response> listener) {
         final List<DiscoveryNode> nodeList = new ArrayList<>();
         clusterService.state().nodes().getNodes().valuesIt().forEachRemaining(node -> {
             if (writerNodes.isEmpty() || writerNodes.contains(node.getName())) {
@@ -569,14 +614,149 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
         });
 
-        int nodeIdx = -1;
+        int pos = -1;
         for (int i = 0; i < nodeList.size(); i++) {
             if (nodeList.get(i).getName().equals(nodeName)) {
-                nodeIdx = i;
+                pos = i;
                 break;
             }
         }
+        if (pos == -1) {
+            listener.onFailure(new ElasticsearchException("Writer nodes are not found for renew."));
+        }
 
+        final int nodeIdx = pos;
+        transportService.sendRequest(nodeList.get(nodeIdx), ACTION_IDXPROXY_CREATE, new CreateRequest(),
+                new TransportResponseHandler<CreateResponse>() {
+
+                    @Override
+                    public CreateResponse newInstance() {
+                        return new CreateResponse();
+                    }
+
+                    @Override
+                    public void handleResponse(final CreateResponse response) {
+                        if (response.isAcknowledged()) {
+                            if (logger.isDebugEnabled()) {
+                                logger.debug("Update file_id in " + nodeName);
+                            }
+                            listener.onResponse(null);
+                        } else {
+                            throw new ElasticsearchException("Failed to update file_id in " + nodeName);
+                        }
+                    }
+
+                    @Override
+                    public void handleException(final TransportException e) {
+                        listener.onFailure(e);
+                    }
+
+                    @Override
+                    public String executor() {
+                        return ThreadPool.Names.GENERIC;
+                    }
+                });
+
+    }
+
+    public <Response extends ActionResponse> void renewOnLocal(final ActionListener<Response> listener) {
+        if (streamOutput == null || (streamOutput != null && streamOutput.getByteCount() == 0)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("No requests in file. Skipped renew action.");
+            }
+            listener.onResponse(null);
+        } else {
+            createStreamOutput(listener);
+        }
+    }
+
+    private void randomWait() {
+        try {
+            Thread.sleep(ThreadLocalRandom.current().nextLong(1000L));
+        } catch (final InterruptedException e) {
+            // ignore
+        }
+    }
+
+    public <Request extends ActionRequest, Response extends ActionResponse> void write(final Request request,
+            final ActionListener<Response> listener) {
+        write(request, listener, 0);
+    }
+
+    private <Request extends ActionRequest, Response extends ActionResponse> void write(final Request request,
+            final ActionListener<Response> listener, final int tryCount) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Writing request " + request);
+        }
+
+        client.prepareGet(INDEX_NAME, TYPE_NAME, FILE_ID).execute(wrap(res -> {
+            if (!res.isExists()) {
+                createStreamOutput(wrap(response -> {
+                    write(request, listener, tryCount + 1);
+                }, listener::onFailure), 0);
+            } else {
+                final Map<String, Object> source = res.getSourceAsMap();
+                final String nodeName = (String) source.get(NODE_NAME);
+                if (nodeName().equals(nodeName)) {
+                    writeOnLocal(request, listener);
+                } else {
+                    writeOnRemote(nodeName, res.getVersion(), request, listener, tryCount);
+                }
+            }
+        }, e -> {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Failed to get file_id.", e);
+            }
+            if (tryCount >= writerRetryCount) {
+                listener.onFailure(e);
+            } else {
+                randomWait();
+                write(request, listener, tryCount + 1);
+            }
+        }));
+    }
+
+    private <Request extends ActionRequest, Response extends ActionResponse> void writeOnRemote(final String nodeName, final long version,
+            final Request request, final ActionListener<Response> listener, final int tryCount) {
+        final List<DiscoveryNode> nodeList = new ArrayList<>();
+        clusterService.state().nodes().getNodes().valuesIt().forEachRemaining(node -> {
+            if (writerNodes.isEmpty() || writerNodes.contains(node.getName())) {
+                nodeList.add(node);
+            }
+        });
+
+        int pos = -1;
+        for (int i = 0; i < nodeList.size(); i++) {
+            if (nodeList.get(i).getName().equals(nodeName)) {
+                pos = i;
+                break;
+            }
+        }
+        if (pos == -1) {
+            if (tryCount >= writerRetryCount) {
+                listener.onFailure(new ElasticsearchException("Writer nodes are not found for writing."));
+            } else {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("No available write node.");
+                }
+                Collections.shuffle(nodeList);
+                final DiscoveryNode nextNode = nodeList.get(0);
+                final Map<String, Object> source = new HashMap<>();
+                source.put(NODE_NAME, nextNode.getName());
+                source.put(TIMESTAMP, new Date());
+                client.prepareUpdate(INDEX_NAME, TYPE_NAME, FILE_ID).setVersion(version).setDoc(source)
+                        .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
+                            write(request, listener, tryCount + 1);
+                        }, ex -> {
+                            if (logger.isDebugEnabled()) {
+                                logger.debug("Failed to update file_id.", ex);
+                            }
+                            write(request, listener, tryCount + 1);
+                        }));
+            }
+        }
+
+        final int nodeIdx = pos;
         transportService.sendRequest(nodeList.get(nodeIdx), ACTION_IDXPROXY_WRITE, new WriteRequest<>(request),
                 new TransportResponseHandler<WriteResponse>() {
 
@@ -593,14 +773,38 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                             }
                             listener.onResponse(null);
                         } else {
-                            throw new ElasticsearchException("Failed to store request: " + request);
+                            throw new ElasticsearchException("Failed to store request: " + RequestUtils.getClassType(request));
                         }
                     }
 
                     @Override
                     public void handleException(final TransportException e) {
-                        // TODO retry?
-                        listener.onFailure(e);
+                        if (tryCount >= writerRetryCount) {
+                            listener.onFailure(e);
+                        } else {
+                            final DiscoveryNode nextNode = nodeList.get((nodeIdx + 1) % nodeList.size());
+                            if (nextNode.getName().equals(nodeName)) {
+                                if (tryCount >= writerRetryCount) {
+                                    listener.onFailure(e);
+                                } else {
+                                    randomWait();
+                                    write(request, listener, tryCount + 1);
+                                }
+                            } else {
+                                final Map<String, Object> source = new HashMap<>();
+                                source.put(NODE_NAME, nextNode.getName());
+                                source.put(TIMESTAMP, new Date());
+                                client.prepareUpdate(INDEX_NAME, TYPE_NAME, FILE_ID).setVersion(version).setDoc(source)
+                                        .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
+                                            write(request, listener, tryCount + 1);
+                                        }, ex -> {
+                                            if (logger.isDebugEnabled()) {
+                                                logger.debug("Failed to update file_id.", ex);
+                                            }
+                                            write(request, listener, tryCount + 1);
+                                        }));
+                            }
+                        }
                     }
 
                     @Override
@@ -608,13 +812,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         return ThreadPool.Names.GENERIC;
                     }
                 });
-
     }
 
     public <Request extends ActionRequest, Response extends ActionResponse> void writeOnLocal(final Request request,
             final ActionListener<Response> listener) {
         final ActionListener<Response> next = wrap(res -> {
-            final short classType = getClassType(request);
+            final short classType = RequestUtils.getClassType(request);
             if (classType > 0) {
                 synchronized (this) {
                     streamOutput.writeShort(classType);
@@ -630,30 +833,34 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }, listener::onFailure);
 
         if (streamOutput == null || streamOutput.getByteCount() > dataFileSize) {
-            createStreamOutput(next, false);
+            createStreamOutput(next);
         } else {
             next.onResponse(null);
         }
     }
 
-    private <Request extends ActionRequest> short getClassType(final Request request) {
-        if (DeleteRequest.class.isInstance(request)) {
-            return TYPE_DELETE;
-        } else if (DeleteByQueryRequest.class.isInstance(request)) {
-            return TYPE_DELETE_BY_QUERY;
-        } else if (IndexRequest.class.isInstance(request)) {
-            return TYPE_INDEX;
-        } else if (UpdateRequest.class.isInstance(request)) {
-            return TYPE_UPDATE;
-        } else if (UpdateByQueryRequest.class.isInstance(request)) {
-            return TYPE_UPDATE_BY_QUERY;
-        } else if (BulkRequest.class.isInstance(request)) {
-            return TYPE_BULK;
+    private <Request extends ActionRequest, Response extends ActionResponse> void writeError(final long position, final Request request,
+            final ActionListener<Response> listener) {
+        final Path outputPath = dataPath.resolve(fileId + "_" + position + ERROR_EXTENTION);
+        logger.info("Saving " + outputPath.toAbsolutePath());
+        final short classType = RequestUtils.getClassType(request);
+        if (classType > 0) {
+            try (IndexingProxyStreamOutput out = AccessController.doPrivileged((PrivilegedAction<IndexingProxyStreamOutput>) () -> {
+                try {
+                    return new IndexingProxyStreamOutput(Files.newOutputStream(outputPath));
+                } catch (final IOException e) {
+                    throw new ElasticsearchException("Could not open " + outputPath, e);
+                }
+            })) {
+                out.writeShort(classType);
+                request.writeTo(out);
+                out.flush();
+            } catch (final Exception e) {
+                listener.onFailure(e);
+            }
+        } else {
+            listener.onFailure(new ElasticsearchException("Unknown request: " + request));
         }
-        if (logger.isDebugEnabled()) {
-            logger.debug("Unknown request: " + request);
-        }
-        return 0;
     }
 
     public boolean isTargetIndex(final String index) {
@@ -661,6 +868,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     public void startDocSender(final String index, final long filePosition, final ActionListener<Map<String, Object>> listener) {
+        if (!senderNodes.isEmpty() && !senderNodes.contains(nodeName())) {
+            listener.onFailure(new ElasticsearchException(nodeName() + " is not a Sender node."));
+            return;
+        }
+
         if (logger.isDebugEnabled()) {
             logger.debug("Starting DocSender(" + index + ")");
         }
@@ -759,7 +971,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         if (version > 0) {
             builder.setVersion(version);
         }
-        builder.setDoc(newSource).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(listener);
+        try {
+            builder.setDoc(newSource).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(listener);
+        } catch (final Exception e) {
+            listener.onFailure(e);
+        }
     }
 
     public void getDocSenderInfos(final int from, final int size, final ActionListener<Map<String, Object>> listener) {
@@ -817,6 +1033,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
         private volatile boolean terminated = false;
 
+        private volatile long requestPosition = 0;
+
         public DocSender(final String index) {
             this.index = index;
         }
@@ -829,7 +1047,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
 
         public boolean isRunning() {
-            return System.currentTimeMillis() - heartbeat < senderAliveTime.getMillis();
+            return !terminated && System.currentTimeMillis() - heartbeat < senderAliveTime.getMillis();
         }
 
         @Override
@@ -879,7 +1097,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             if (errorCount > senderRetryCount) {
                 logger.error("DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
                 if (senderSkipErrorFile) {
-                    processNext();
+                    processNext(filePosition + 1);
                 }
             } else {
                 logger.warn("DocSender(" + index + ")@" + errorCount + ": " + message, e);
@@ -894,6 +1112,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             path = dataPath.resolve(String.format(dataFileFormat, filePosition) + DATA_EXTENTION);
             if (existsFile(path)) {
                 logger.info("[{}][{}] Indexing from {}", filePosition, version, path.toAbsolutePath());
+                requestPosition = 0;
                 try {
                     processRequests(AccessController.doPrivileged((PrivilegedAction<IndexingProxyStreamInput>) () -> {
                         try {
@@ -911,6 +1130,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 if (logger.isDebugEnabled()) {
                     logger.debug("{} does not exist.", path.toAbsolutePath());
                 }
+                for (long i = filePosition + 1; i < filePosition + 1 + senderLookupFiles; i++) {
+                    if (existsFile(dataPath.resolve(String.format(dataFileFormat, i) + DATA_EXTENTION))) {
+                        logger.warn("file_id " + filePosition + " is skipped. Moving to file_id " + i);
+                        processNext(i);
+                        return;
+                    }
+                }
                 threadPool.schedule(senderInterval, Names.GENERIC, this);
                 // retry
             }
@@ -923,6 +1149,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 logger.warn("Terminate DocIndexer(" + index + ")");
                 return;
             }
+            requestPosition++;
             try {
                 if (logger.isDebugEnabled()) {
                     logger.debug("DocSender(" + index + ") is processing requests.");
@@ -930,22 +1157,22 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 if (streamInput.available() > 0) {
                     final short classType = streamInput.readShort();
                     switch (classType) {
-                    case TYPE_DELETE:
+                    case RequestUtils.TYPE_DELETE:
                         processDeleteRequest(streamInput);
                         break;
-                    case TYPE_DELETE_BY_QUERY:
+                    case RequestUtils.TYPE_DELETE_BY_QUERY:
                         processDeleteByQueryRequest(streamInput);
                         break;
-                    case TYPE_INDEX:
+                    case RequestUtils.TYPE_INDEX:
                         processIndexRequest(streamInput);
                         break;
-                    case TYPE_UPDATE:
+                    case RequestUtils.TYPE_UPDATE:
                         processUpdateRequest(streamInput);
                         break;
-                    case TYPE_UPDATE_BY_QUERY:
+                    case RequestUtils.TYPE_UPDATE_BY_QUERY:
                         processUpdateByQueryRequest(streamInput);
                         break;
-                    case TYPE_BULK:
+                    case RequestUtils.TYPE_BULK:
                         processBulkRequest(streamInput);
                         break;
                     default:
@@ -955,7 +1182,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                     IOUtils.closeQuietly(streamInput);
                     logger.info("Finished to process {}", path.toAbsolutePath());
 
-                    processNext();
+                    processNext(filePosition + 1);
                 }
             } catch (final Exception e) {
                 IOUtils.closeQuietly(streamInput);
@@ -964,12 +1191,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
         }
 
-        private void processNext() {
+        private void processNext(final long position) {
             if (logger.isDebugEnabled()) {
                 logger.debug("DocSender(" + index + ") moves next files.");
             }
             final Map<String, Object> source = new HashMap<>();
-            source.put(FILE_POSITION, filePosition + 1);
+            source.put(FILE_POSITION, position);
             source.put(TIMESTAMP, new Date());
             client.prepareUpdate(INDEX_NAME, TYPE_NAME, index).setVersion(version).setDoc(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL)
                     .execute(wrap(res -> {
@@ -1012,12 +1239,15 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to process (" + builder.request() + ")", e);
+                        logger.error("[" + requestErrorCount + "] Failed to process the bulk request.", e);
                         requestErrorCount = 0;
-                        processRequests(streamInput);
+                        writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
+                            logger.warn("Failed to store an error request.", ex);
+                            processRequests(streamInput);
+                        }));
                     } else {
                         if (logger.isDebugEnabled()) {
-                            logger.debug("[" + requestErrorCount + "] Failed to process (" + builder.request() + ")", e);
+                            logger.debug("[" + requestErrorCount + "] Failed to process the bulk request.", e);
                         }
                         requestErrorCount++;
                         executeBulkRequest(streamInput, builder);
@@ -1045,12 +1275,15 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to update (" + builder.request() + ")", e);
+                        logger.error("[" + requestErrorCount + "] Failed to update requests.", e);
                         requestErrorCount = 0;
-                        processRequests(streamInput);
+                        writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
+                            logger.warn("Failed to store an error request.", ex);
+                            processRequests(streamInput);
+                        }));
                     } else {
                         if (logger.isDebugEnabled()) {
-                            logger.debug("[" + requestErrorCount + "] Failed to update (" + builder.request() + ")", e);
+                            logger.debug("[" + requestErrorCount + "] Failed to update requests.", e);
                         }
                         requestErrorCount++;
                         executeUpdateByQueryRequest(streamInput, builder);
@@ -1078,12 +1311,17 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to update (" + builder.request() + ")", e);
+                        logger.error("[" + requestErrorCount + "] Failed to update [" + builder.request().index() + "]["
+                                + builder.request().type() + "][" + builder.request().id() + "]", e);
                         requestErrorCount = 0;
-                        processRequests(streamInput);
+                        writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
+                            logger.warn("Failed to store an error request.", ex);
+                            processRequests(streamInput);
+                        }));
                     } else {
                         if (logger.isDebugEnabled()) {
-                            logger.debug("[" + requestErrorCount + "] Failed to update (" + builder.request() + ")", e);
+                            logger.debug("[" + requestErrorCount + "] Failed to update [" + builder.request().index() + "]["
+                                    + builder.request().type() + "][" + builder.request().id() + "]", e);
                         }
                         requestErrorCount++;
                         executeUpdateRequest(streamInput, builder);
@@ -1111,12 +1349,17 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to index (" + builder.request() + ")", e);
+                        logger.error("[" + requestErrorCount + "] Failed to index [" + builder.request().index() + "]["
+                                + builder.request().type() + "][" + builder.request().id() + "]", e);
                         requestErrorCount = 0;
-                        processRequests(streamInput);
+                        writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
+                            logger.warn("Failed to store an error request.", ex);
+                            processRequests(streamInput);
+                        }));
                     } else {
                         if (logger.isDebugEnabled()) {
-                            logger.debug("[" + requestErrorCount + "] Failed to index (" + builder.request() + ")", e);
+                            logger.debug("[" + requestErrorCount + "] Failed to index [" + builder.request().index() + "]["
+                                    + builder.request().type() + "][" + builder.request().id() + "]", e);
                         }
                         requestErrorCount++;
                         executeIndexRequest(streamInput, builder);
@@ -1140,15 +1383,22 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         private void executeDeleteByQueryRequest(final StreamInput streamInput, final DeleteByQueryRequestBuilder builder) {
             builder.execute(wrap(res -> {
                 processRequests(streamInput);
+                // continue
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to delete (" + builder.request() + ")", e);
+                        logger.error("[" + requestErrorCount + "] Failed to delete [" + Arrays.toString(builder.request().indices()) + "]",
+                                e);
                         requestErrorCount = 0;
-                        processRequests(streamInput);
+                        writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
+                            logger.warn("Failed to store an error request.", ex);
+                            processRequests(streamInput);
+                        }));
                     } else {
                         if (logger.isDebugEnabled()) {
-                            logger.debug("[" + requestErrorCount + "] Failed to delete (" + builder.request() + ")", e);
+                            logger.debug(
+                                    "[" + requestErrorCount + "] Failed to delete [" + Arrays.toString(builder.request().indices()) + "]",
+                                    e);
                         }
                         requestErrorCount++;
                         executeDeleteByQueryRequest(streamInput, builder);
@@ -1171,17 +1421,22 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
         private void executeDeleteRequest(final StreamInput streamInput, final DeleteRequestBuilder builder) {
             builder.execute(wrap(res -> {
-                requestErrorCount = 0;
                 processRequests(streamInput);
+                // continue
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to delete (" + builder.request() + ")", e);
+                        logger.error("[" + requestErrorCount + "] Failed to delete [" + builder.request().index() + "]["
+                                + builder.request().type() + "][" + builder.request().id() + "]", e);
                         requestErrorCount = 0;
-                        processRequests(streamInput);
+                        writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
+                            logger.warn("Failed to store an error request.", ex);
+                            processRequests(streamInput);
+                        }));
                     } else {
                         if (logger.isDebugEnabled()) {
-                            logger.debug("[" + requestErrorCount + "] Failed to delete (" + builder.request() + ")", e);
+                            logger.debug("[" + requestErrorCount + "] Failed to delete [" + builder.request().index() + "]["
+                                    + builder.request().type() + "][" + builder.request().id() + "]", e);
                         }
                         requestErrorCount++;
                         executeDeleteRequest(streamInput, builder);
@@ -1193,11 +1448,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 }
             }));
         }
+    }
 
-        private boolean existsFile(final Path p) {
-            return AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> {
-                return p.toFile().exists();
-            });
-        }
+    private static boolean existsFile(final Path p) {
+        return AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> {
+            return p.toFile().exists();
+        });
     }
 }

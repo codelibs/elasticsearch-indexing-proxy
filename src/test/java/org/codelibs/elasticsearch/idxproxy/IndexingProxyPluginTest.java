@@ -336,9 +336,9 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
         }
 
-        assertSender(node1, index1, false);
-        assertSender(node2, index1, false);
-        assertSender(node3, index1, true);
+        assertSender(node1, index1, true, false);
+        assertSender(node2, index1, true, false);
+        assertSender(node3, index1, true, true);
 
         try (CurlResponse curlResponse = Curl.post(node1, "/.idxproxy/config/" + index1).header("Content-Type", "application/json")
                 .body("{\"doc_type\":\"index\",\"node_name\":\"Node 2\",\"file_position\":1}").execute()) {
@@ -349,23 +349,117 @@ public class IndexingProxyPluginTest extends TestCase {
 
         Thread.sleep(3000);
 
-        assertSender(node1, index1, false);
-        assertSender(node2, index1, true);
-        assertSender(node3, index1, false);
+        assertSender(node1, index1, true, false);
+        assertSender(node2, index1, true, true);
+        assertSender(node3, index1, true, false);
     }
 
-    private void assertSender(final Node node, final String index, final boolean running) throws IOException {
+    public void test_switchnodes() throws Exception {
+        setUp((number, settingsBuilder) -> {
+            settingsBuilder.put("idxproxy.data.path", dataDir.getAbsolutePath());
+            settingsBuilder.put("idxproxy.sender.interval", "1s");
+            settingsBuilder.put("idxproxy.monitor.interval", "1s");
+            settingsBuilder.putArray("idxproxy.target.indices", "sample");
+            settingsBuilder.putArray("idxproxy.sender_nodes", "Node 2", "Node 3");
+            settingsBuilder.putArray("idxproxy.writer_nodes", "Node 2", "Node 3");
+        });
+
+        final Node node1 = runner.getNode(0);
+        final Node node2 = runner.getNode(1);
+        final Node node3 = runner.getNode(2);
+
+        final String alias = "sample";
+        final String index1 = "sample1";
+        final String type = "data";
+        runner.createIndex(index1, Settings.builder().build());
+        runner.updateAlias(alias, new String[] { index1 }, new String[0]);
+
+        runner.ensureYellow(".idxproxy");
+
+        // send requests to data file
+        indexRequest(node2, alias, type, 1000);
+        createRequest(node1, alias, type, 1001);
+        updateRequest(node1, alias, type, 1001);
+        createRequest(node1, alias, type, 1002);
+        updateByQueryRequest(node1, alias, type, 1002);
+        createRequest(node1, alias, type, 1003);
+        deleteRequest(node1, alias, type, 1003);
+        createRequest(node1, alias, type, 1004);
+        deleteByQueryRequest(node1, alias, type, 1004);
+        bulkRequest(node1, alias, type, 1005);
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        runner.refresh();
+
+        try (CurlResponse curlResponse =
+                Curl.post(node1, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            assertEquals(500, curlResponse.getHttpStatusCode());
+        }
+
+        Thread.sleep(5000L);
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        assertSender(node1, index1, false, false);
+        assertSender(node2, index1, false, false);
+        assertSender(node3, index1, false, false);
+
+        try (CurlResponse curlResponse =
+                Curl.post(node2, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(1, ((Integer) map.get("file_position")).intValue());
+        }
+
+        waitForNdocs(node1, index1, type, 5);
+
+        assertSender(node1, index1, true, false);
+        assertSender(node2, index1, true, true);
+        assertSender(node3, index1, true, false);
+
+        node2.close();
+
+        Thread.sleep(5000L);
+
+        assertSender(node1, index1, true, false);
+        assertSender(node3, index1, true, true);
+
+        // send requests to data file
+        // indexRequest(node1, alias, type, 2000);
+        createRequest(node1, alias, type, 2001);
+        updateRequest(node1, alias, type, 2001);
+        createRequest(node1, alias, type, 2002);
+        updateByQueryRequest(node1, alias, type, 2002);
+        createRequest(node1, alias, type, 2003);
+        deleteRequest(node1, alias, type, 2003);
+        createRequest(node1, alias, type, 2004);
+        deleteByQueryRequest(node1, alias, type, 2004);
+        bulkRequest(node1, alias, type, 2005);
+
+        assertNumOfDocs(node1, index1, type, 5);
+
+        runner.refresh();
+
+        waitForNdocs(node1, index1, type, 9);
+
+    }
+
+    private void assertSender(final Node node, final String index, final boolean found, final boolean running) throws IOException {
         try (CurlResponse curlResponse =
                 Curl.get(node, "/" + index + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
-            assertEquals(true, ((Boolean) map.get("found")).booleanValue());
-            assertEquals(running, ((Boolean) map.get("running")).booleanValue());
+            assertEquals(found, ((Boolean) map.get("found")).booleanValue());
+            if (found) {
+                assertEquals(running, ((Boolean) map.get("running")).booleanValue());
+            }
         }
     }
 
     private void waitForNdocs(final Node node, final String index1, final String type, final long num) throws Exception {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 30; i++) {
             try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search")
                     .header("Content-Type", "application/json").body("{\"query\":{\"match_all\":{}}}").execute()) {
                 final Map<String, Object> map = curlResponse.getContentAsMap();
