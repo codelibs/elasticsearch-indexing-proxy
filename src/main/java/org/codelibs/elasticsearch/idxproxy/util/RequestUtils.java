@@ -44,6 +44,7 @@ public class RequestUtils {
         return 0;
     }
 
+    @SuppressWarnings("unchecked")
     public static <Request extends ActionRequest> Request newRequest(final short classType) {
         switch (classType) {
         case RequestUtils.TYPE_DELETE:

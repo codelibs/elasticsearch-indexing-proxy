@@ -2,13 +2,11 @@ package org.codelibs.elasticsearch.idxproxy.action;
 
 import java.io.IOException;
 
-import org.codelibs.elasticsearch.idxproxy.util.RequestUtils;
-import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.transport.TransportRequest;
 
-public class CreateRequest<Request extends ActionRequest> extends TransportRequest {
+public class CreateRequest extends TransportRequest {
 
     public CreateRequest() {
     }

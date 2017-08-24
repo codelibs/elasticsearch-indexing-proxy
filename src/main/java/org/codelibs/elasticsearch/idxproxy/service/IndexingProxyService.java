@@ -17,6 +17,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,6 +31,7 @@ import org.apache.logging.log4j.util.Strings;
 import org.codelibs.elasticsearch.idxproxy.IndexingProxyPlugin.PluginComponent;
 import org.codelibs.elasticsearch.idxproxy.action.CreateRequest;
 import org.codelibs.elasticsearch.idxproxy.action.CreateRequestHandler;
+import org.codelibs.elasticsearch.idxproxy.action.CreateResponse;
 import org.codelibs.elasticsearch.idxproxy.action.PingRequest;
 import org.codelibs.elasticsearch.idxproxy.action.PingRequestHandler;
 import org.codelibs.elasticsearch.idxproxy.action.PingResponse;
@@ -85,6 +87,7 @@ import org.elasticsearch.index.reindex.DeleteByQueryRequestBuilder;
 import org.elasticsearch.index.reindex.UpdateByQueryAction;
 import org.elasticsearch.index.reindex.UpdateByQueryRequest;
 import org.elasticsearch.index.reindex.UpdateByQueryRequestBuilder;
+import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.threadpool.ThreadPool.Names;
 import org.elasticsearch.transport.TransportException;
@@ -147,6 +150,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     public static final Setting<TimeValue> SETTING_INXPROXY_SENDER_ALIVE_TIME =
             Setting.timeSetting("idxproxy.sender.alive_time", TimeValue.timeValueMinutes(10), Property.NodeScope);
 
+    public static final Setting<Integer> SETTING_INXPROXY_SENDER_LOOKUP_FILES =
+            Setting.intSetting("idxproxy.sender.lookup_files", 1000, Property.NodeScope);
+
     public static final Setting<TimeValue> SETTING_INXPROXY_MONITOR_INTERVAL =
             Setting.timeSetting("idxproxy.monitor.interval", TimeValue.timeValueMinutes(1), Property.NodeScope);
 
@@ -161,6 +167,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     public static final Setting<Boolean> SETTING_INXPROXY_FLUSH_PER_DOC =
             Setting.boolSetting("idxproxy.flush_per_doc", true, Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_NUMBER_OF_SHARDS =
+            Setting.intSetting("idxproxy.number_of_shards", 1, Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_NUMBER_OF_REPLICAS =
+            Setting.intSetting("idxproxy.number_of_replicas", 1, Property.NodeScope);
 
     private final TransportService transportService;
 
@@ -204,6 +216,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     private final int writerRetryCount;
 
+    private final int senderLookupFiles;
+
+    private final int numberOfReplicas;
+
+    private final int numberOfShards;
+
     private final Map<String, DocSender> docSenderMap = new ConcurrentHashMap<>();
 
     private final AtomicBoolean isMasterNode = new AtomicBoolean(false);
@@ -241,10 +259,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         senderSkipErrorFile = SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE.get(settings);
         flushPerDoc = SETTING_INXPROXY_FLUSH_PER_DOC.get(settings);
         senderAliveTime = SETTING_INXPROXY_SENDER_ALIVE_TIME.get(settings);
+        senderLookupFiles = SETTING_INXPROXY_SENDER_LOOKUP_FILES.get(settings);
         monitorInterval = SETTING_INXPROXY_MONITOR_INTERVAL.get(settings);
         senderNodes = SETTING_INXPROXY_SENDER_NODES.get(settings);
         writerNodes = SETTING_INXPROXY_WRITE_NODES.get(settings);
         writerRetryCount = SETTING_INXPROXY_WRITER_RETRY_COUNT.get(settings);
+        numberOfReplicas = SETTING_INXPROXY_NUMBER_OF_REPLICAS.get(settings);
+        numberOfShards = SETTING_INXPROXY_NUMBER_OF_SHARDS.get(settings);
 
         for (final ActionFilter filter : filters.filters()) {
             if (filter instanceof ProxyActionFilter) {
@@ -311,64 +332,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             try {
                 client.prepareSearch(INDEX_NAME).setTypes(TYPE_NAME).setQuery(QueryBuilders.termQuery(DOC_TYPE, "index")).setSize(1000)
                         .execute(wrap(response -> {
-                            Arrays.stream(response.getHits().getHits()).forEach(hit -> {
-                                final String index = hit.getId();
-                                final Map<String, Object> source = hit.getSource();
-                                final String nodeName = (String) source.get(NODE_NAME);
-                                final DiscoveryNode node = nodeMap.get(nodeName);
-                                if (node == null) {
-                                    final String otherNode = getOtherNode(nodeName, nodeMap);
-                                    updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
-                                        if (otherNode.length() == 0) {
-                                            logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
-                                        } else {
-                                            logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender(" + index + ")");
-                                        }
-                                    }, e -> {
-                                        logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e);
-                                    }));
-                                } else {
-                                    transportService.sendRequest(node, ACTION_IDXPROXY_PING, new PingRequest(index),
-                                            new TransportResponseHandler<PingResponse>() {
-
-                                                @Override
-                                                public PingResponse newInstance() {
-                                                    return new PingResponse();
-                                                }
-
-                                                @Override
-                                                public void handleResponse(final PingResponse response) {
-                                                    if (response.isAcknowledged() && !response.isFound()) {
-                                                        logger.info("Started DocSender(" + index + ") in " + nodeName);
-                                                    } else if (logger.isDebugEnabled()) {
-                                                        logger.debug("DocSender(" + index + ") is working in " + nodeName);
-                                                    }
-                                                }
-
-                                                @Override
-                                                public void handleException(final TransportException e) {
-                                                    logger.warn("Failed to start DocSender(" + index + ") in " + nodeName, e);
-                                                    final String otherNode = getOtherNode(nodeName, nodeMap);
-                                                    updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
-                                                        if (otherNode.length() == 0) {
-                                                            logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
-                                                        } else {
-                                                            logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender("
-                                                                    + index + ")");
-                                                        }
-                                                    }, e1 -> {
-                                                        logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e1);
-                                                    }));
-                                                }
-
-                                                @Override
-                                                public String executor() {
-                                                    return ThreadPool.Names.GENERIC;
-                                                }
-                                            });
-                                }
-                            });
-                            threadPool.schedule(monitorInterval, Names.GENERIC, this);
+                            checkSender(nodeMap, Arrays.asList(response.getHits().getHits()).iterator());
                         }, e -> {
                             if (e instanceof IndexNotFoundException) {
                                 if (logger.isDebugEnabled()) {
@@ -387,6 +351,73 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             } catch (final Exception e) {
                 logger.warn("Failed to process Monitor(" + nodeName() + ")", e);
                 threadPool.schedule(monitorInterval, Names.GENERIC, this);
+            }
+        }
+
+        private void checkSender(final Map<String, DiscoveryNode> nodeMap, final Iterator<SearchHit> hitIter) {
+            if (!hitIter.hasNext()) {
+                threadPool.schedule(monitorInterval, Names.GENERIC, this);
+                return;
+            }
+            final SearchHit hit = hitIter.next();
+            final String index = hit.getId();
+            final Map<String, Object> source = hit.getSource();
+            final String nodeName = (String) source.get(NODE_NAME);
+            final DiscoveryNode node = nodeMap.get(nodeName);
+            if (node == null) {
+                final String otherNode = getOtherNode(nodeName, nodeMap);
+                updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
+                    if (otherNode.length() == 0) {
+                        logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
+                    } else {
+                        logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender(" + index + ")");
+                    }
+                    checkSender(nodeMap, hitIter);
+                }, e -> {
+                    logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e);
+                    checkSender(nodeMap, hitIter);
+                }));
+            } else {
+                transportService.sendRequest(node, ACTION_IDXPROXY_PING, new PingRequest(index),
+                        new TransportResponseHandler<PingResponse>() {
+
+                            @Override
+                            public PingResponse newInstance() {
+                                return new PingResponse();
+                            }
+
+                            @Override
+                            public void handleResponse(final PingResponse response) {
+                                if (response.isAcknowledged() && !response.isFound()) {
+                                    logger.info("Started DocSender(" + index + ") in " + nodeName);
+                                } else if (logger.isDebugEnabled()) {
+                                    logger.debug("DocSender(" + index + ") is working in " + nodeName);
+                                }
+                                checkSender(nodeMap, hitIter);
+                            }
+
+                            @Override
+                            public void handleException(final TransportException e) {
+                                logger.warn("Failed to start DocSender(" + index + ") in " + nodeName, e);
+                                final String otherNode = getOtherNode(nodeName, nodeMap);
+                                updateDocSenderInfo(index, otherNode, 0, wrap(res -> {
+                                    if (otherNode.length() == 0) {
+                                        logger.info("Remove " + nodeName + " from DocSender(" + index + ")");
+                                    } else {
+                                        logger.info("Replace " + nodeName + " with " + otherNode + " for DocSender(" + index + ")");
+                                    }
+                                    checkSender(nodeMap, hitIter);
+                                }, e1 -> {
+                                    logger.warn("Failed to remove " + nodeName + " from DocSender(" + index + ")", e1);
+                                    checkSender(nodeMap, hitIter);
+                                }));
+                            }
+
+                            @Override
+                            public String executor() {
+                                return ThreadPool.Names.GENERIC;
+                            }
+                        });
             }
         }
     }
@@ -452,7 +483,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             final XContentBuilder settingsBuilder = XContentFactory.jsonBuilder()//
                     .startObject()//
                     .startObject("index")//
-                    .field("number_of_replicas", 0)//
+                    .field("number_of_shards", numberOfShards)//
+                    .field("number_of_replicas", numberOfReplicas)//
                     .endObject()//
                     .endObject();
             client.admin().indices().prepareCreate(INDEX_NAME).setSettings(settingsBuilder)
@@ -480,7 +512,6 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     private <Response extends ActionResponse> void createStreamOutput(final ActionListener<Response> listener) {
-        System.out.println("XXXXX: createStreamOutput " + nodeName());
         client.prepareGet(INDEX_NAME, TYPE_NAME, FILE_ID).execute(wrap(res -> {
             if (!res.isExists()) {
                 createStreamOutput(listener, 0);
@@ -488,9 +519,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String nodeName = (String) source.get(NODE_NAME);
                 if (nodeName().equals(nodeName)) {
-                    listener.onResponse(null);
-                } else {
                     createStreamOutput(listener, res.getVersion());
+                } else {
+                    listener.onResponse(null);
                 }
             }
         }, listener::onFailure));
@@ -501,17 +532,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         final Map<String, Object> source = new HashMap<>();
         source.put(DOC_TYPE, FILE_ID);
         source.put(NODE_NAME, nodeName());
+        source.put(TIMESTAMP, new Date());
         final IndexRequestBuilder builder = client.prepareIndex(INDEX_NAME, TYPE_NAME, FILE_ID);
         if (version > 0) {
             builder.setVersion(version);
         } else {
             builder.setCreate(true);
-        }
-        try {
-            // TODO
-            throw new ElasticsearchException("XXXXX: version=" + version + ", node=" + nodeName());
-        } catch (Exception e) {
-            e.printStackTrace();
         }
         builder.setSource(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
             synchronized (this) {
@@ -561,29 +587,22 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     public <Response extends ActionResponse> void renew(final ActionListener<Response> listener) {
-        if (streamOutput == null || (streamOutput != null && streamOutput.getByteCount() == 0)) {
-            if (logger.isDebugEnabled()) {
-                logger.debug("No requests in file. Skipped renew action.");
-            }
-            listener.onResponse(null);
-        } else {
-            client.prepareGet(INDEX_NAME, TYPE_NAME, FILE_ID).execute(wrap(res -> {
-                if (!res.isExists()) {
-                    if (logger.isDebugEnabled()) {
-                        logger.debug("No file_id. Skipped renew action.");
-                    }
-                    listener.onResponse(null);
+        client.prepareGet(INDEX_NAME, TYPE_NAME, FILE_ID).execute(wrap(res -> {
+            if (res.isExists()) {
+                final Map<String, Object> source = res.getSourceAsMap();
+                final String nodeName = (String) source.get(NODE_NAME);
+                if (nodeName().equals(nodeName)) {
+                    renewOnLocal(listener);
                 } else {
-                    final Map<String, Object> source = res.getSourceAsMap();
-                    final String nodeName = (String) source.get(NODE_NAME);
-                    if (nodeName().equals(nodeName)) {
-                        renewOnLocal(listener);
-                    } else {
-                        renewOnRemote(nodeName, listener);
-                    }
+                    renewOnRemote(nodeName, listener);
                 }
-            }, listener::onFailure));
-        }
+            } else {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("No file_id. Skipped renew action.");
+                }
+                listener.onResponse(null);
+            }
+        }, listener::onFailure));
     }
 
     private <Request extends ActionRequest, Response extends ActionResponse> void renewOnRemote(final String nodeName,
@@ -603,20 +622,20 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
         }
         if (pos == -1) {
-            listener.onFailure(new ElasticsearchException("Writer nodes are not found."));
+            listener.onFailure(new ElasticsearchException("Writer nodes are not found for renew."));
         }
 
         final int nodeIdx = pos;
-        transportService.sendRequest(nodeList.get(nodeIdx), ACTION_IDXPROXY_WRITE, new CreateRequest<>(),
-                new TransportResponseHandler<WriteResponse>() {
+        transportService.sendRequest(nodeList.get(nodeIdx), ACTION_IDXPROXY_CREATE, new CreateRequest(),
+                new TransportResponseHandler<CreateResponse>() {
 
                     @Override
-                    public WriteResponse newInstance() {
-                        return new WriteResponse();
+                    public CreateResponse newInstance() {
+                        return new CreateResponse();
                     }
 
                     @Override
-                    public void handleResponse(final WriteResponse response) {
+                    public void handleResponse(final CreateResponse response) {
                         if (response.isAcknowledged()) {
                             if (logger.isDebugEnabled()) {
                                 logger.debug("Update file_id in " + nodeName);
@@ -641,7 +660,14 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     public <Response extends ActionResponse> void renewOnLocal(final ActionListener<Response> listener) {
-        createStreamOutput(listener);
+        if (streamOutput == null || (streamOutput != null && streamOutput.getByteCount() == 0)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("No requests in file. Skipped renew action.");
+            }
+            listener.onResponse(null);
+        } else {
+            createStreamOutput(listener);
+        }
     }
 
     private void randomWait() {
@@ -671,7 +697,6 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             } else {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String nodeName = (String) source.get(NODE_NAME);
-                System.out.println("XXXXX: " + nodeName + " : " + nodeName());
                 if (nodeName().equals(nodeName)) {
                     writeOnLocal(request, listener);
                 } else {
@@ -708,7 +733,27 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
         }
         if (pos == -1) {
-            listener.onFailure(new ElasticsearchException("Writer nodes are not found."));
+            if (tryCount >= writerRetryCount) {
+                listener.onFailure(new ElasticsearchException("Writer nodes are not found for writing."));
+            } else {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("No available write node.");
+                }
+                Collections.shuffle(nodeList);
+                final DiscoveryNode nextNode = nodeList.get(0);
+                final Map<String, Object> source = new HashMap<>();
+                source.put(NODE_NAME, nextNode.getName());
+                source.put(TIMESTAMP, new Date());
+                client.prepareUpdate(INDEX_NAME, TYPE_NAME, FILE_ID).setVersion(version).setDoc(source)
+                        .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
+                            write(request, listener, tryCount + 1);
+                        }, ex -> {
+                            if (logger.isDebugEnabled()) {
+                                logger.debug("Failed to update file_id.", ex);
+                            }
+                            write(request, listener, tryCount + 1);
+                        }));
+            }
         }
 
         final int nodeIdx = pos;
@@ -728,7 +773,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                             }
                             listener.onResponse(null);
                         } else {
-                            throw new ElasticsearchException("Failed to store request: " +  RequestUtils.getClassType(request));
+                            throw new ElasticsearchException("Failed to store request: " + RequestUtils.getClassType(request));
                         }
                     }
 
@@ -739,7 +784,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         } else {
                             final DiscoveryNode nextNode = nodeList.get((nodeIdx + 1) % nodeList.size());
                             if (nextNode.getName().equals(nodeName)) {
-                                listener.onFailure(e);
+                                if (tryCount >= writerRetryCount) {
+                                    listener.onFailure(e);
+                                } else {
+                                    randomWait();
+                                    write(request, listener, tryCount + 1);
+                                }
                             } else {
                                 final Map<String, Object> source = new HashMap<>();
                                 source.put(NODE_NAME, nextNode.getName());
@@ -782,7 +832,6 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             listener.onResponse(res);
         }, listener::onFailure);
 
-        System.out.println("XXXXX: writeOnLocal " + nodeName());
         if (streamOutput == null || streamOutput.getByteCount() > dataFileSize) {
             createStreamOutput(next);
         } else {
@@ -821,6 +870,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     public void startDocSender(final String index, final long filePosition, final ActionListener<Map<String, Object>> listener) {
         if (!senderNodes.isEmpty() && !senderNodes.contains(nodeName())) {
             listener.onFailure(new ElasticsearchException(nodeName() + " is not a Sender node."));
+            return;
         }
 
         if (logger.isDebugEnabled()) {
@@ -921,7 +971,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         if (version > 0) {
             builder.setVersion(version);
         }
-        builder.setDoc(newSource).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(listener);
+        try {
+            builder.setDoc(newSource).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(listener);
+        } catch (final Exception e) {
+            listener.onFailure(e);
+        }
     }
 
     public void getDocSenderInfos(final int from, final int size, final ActionListener<Map<String, Object>> listener) {
@@ -1043,7 +1097,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             if (errorCount > senderRetryCount) {
                 logger.error("DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
                 if (senderSkipErrorFile) {
-                    processNext();
+                    processNext(filePosition + 1);
                 }
             } else {
                 logger.warn("DocSender(" + index + ")@" + errorCount + ": " + message, e);
@@ -1075,6 +1129,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             } else {
                 if (logger.isDebugEnabled()) {
                     logger.debug("{} does not exist.", path.toAbsolutePath());
+                }
+                for (long i = filePosition + 1; i < filePosition + 1 + senderLookupFiles; i++) {
+                    if (existsFile(dataPath.resolve(String.format(dataFileFormat, i) + DATA_EXTENTION))) {
+                        logger.warn("file_id " + filePosition + " is skipped. Moving to file_id " + i);
+                        processNext(i);
+                        return;
+                    }
                 }
                 threadPool.schedule(senderInterval, Names.GENERIC, this);
                 // retry
@@ -1121,7 +1182,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                     IOUtils.closeQuietly(streamInput);
                     logger.info("Finished to process {}", path.toAbsolutePath());
 
-                    processNext();
+                    processNext(filePosition + 1);
                 }
             } catch (final Exception e) {
                 IOUtils.closeQuietly(streamInput);
@@ -1130,12 +1191,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
         }
 
-        private void processNext() {
+        private void processNext(final long position) {
             if (logger.isDebugEnabled()) {
                 logger.debug("DocSender(" + index + ") moves next files.");
             }
             final Map<String, Object> source = new HashMap<>();
-            source.put(FILE_POSITION, filePosition + 1);
+            source.put(FILE_POSITION, position);
             source.put(TIMESTAMP, new Date());
             client.prepareUpdate(INDEX_NAME, TYPE_NAME, index).setVersion(version).setDoc(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL)
                     .execute(wrap(res -> {
@@ -1387,11 +1448,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 }
             }));
         }
+    }
 
-        private boolean existsFile(final Path p) {
-            return AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> {
-                return p.toFile().exists();
-            });
-        }
+    private static boolean existsFile(final Path p) {
+        return AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> {
+            return p.toFile().exists();
+        });
     }
 }

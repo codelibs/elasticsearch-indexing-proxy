@@ -6,11 +6,10 @@ import java.io.IOException;
 
 import org.codelibs.elasticsearch.idxproxy.service.IndexingProxyService;
 import org.elasticsearch.ElasticsearchException;
-import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportRequestHandler;
 
-public class CreateRequestHandler<Request extends ActionRequest> implements TransportRequestHandler<CreateRequest<Request>> {
+public class CreateRequestHandler implements TransportRequestHandler<CreateRequest> {
 
     private final IndexingProxyService indexingProxyService;
 
@@ -19,7 +18,7 @@ public class CreateRequestHandler<Request extends ActionRequest> implements Tran
     }
 
     @Override
-    public void messageReceived(final CreateRequest<Request> request, final TransportChannel channel) throws Exception {
+    public void messageReceived(final CreateRequest request, final TransportChannel channel) throws Exception {
         indexingProxyService.renewOnLocal(wrap(res -> channel.sendResponse(new CreateResponse(true)), e -> {
             try {
                 channel.sendResponse(e);
