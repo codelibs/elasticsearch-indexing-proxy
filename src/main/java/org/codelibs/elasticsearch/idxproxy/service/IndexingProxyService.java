@@ -548,6 +548,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
                     fileId = String.format(dataFileFormat, res.getVersion());
                     final Path outputPath = dataPath.resolve(fileId + WORKING_EXTENTION);
+                    if (existsFile(outputPath)) {
+                        finalizeDataFile();
+                        createStreamOutput(listener, res.getVersion());
+                        return;
+                    }
                     streamOutput = AccessController.doPrivileged((PrivilegedAction<IndexingProxyStreamOutput>) () -> {
                         try {
                             return new IndexingProxyStreamOutput(Files.newOutputStream(outputPath));
@@ -573,7 +578,10 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         } catch (final IOException e) {
             throw new ElasticsearchException("Failed to close streamOutput.", e);
         }
+        finalizeDataFile();
+    }
 
+    private void finalizeDataFile() {
         final Path source = dataPath.resolve(fileId + WORKING_EXTENTION);
         final Path target = dataPath.resolve(fileId + DATA_EXTENTION);
         final Path outputPath = AccessController.doPrivileged((PrivilegedAction<Path>) () -> {
@@ -583,7 +591,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 throw new ElasticsearchException("Failed to move " + source.toAbsolutePath() + " to " + target.toAbsolutePath(), e);
             }
         });
-        logger.info("Closed " + outputPath.toAbsolutePath());
+        logger.info("Finalized " + outputPath.toAbsolutePath());
     }
 
     public <Response extends ActionResponse> void renew(final ActionListener<Response> listener) {
@@ -1097,7 +1105,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             if (errorCount > senderRetryCount) {
                 logger.error("DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
                 if (senderSkipErrorFile) {
-                    processNext(filePosition + 1);
+                    processNext(getNextValue(filePosition));
                 }
             } else {
                 logger.warn("DocSender(" + index + ")@" + errorCount + ": " + message, e);
@@ -1130,12 +1138,15 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 if (logger.isDebugEnabled()) {
                     logger.debug("{} does not exist.", path.toAbsolutePath());
                 }
-                for (long i = filePosition + 1; i < filePosition + 1 + senderLookupFiles; i++) {
-                    if (existsFile(dataPath.resolve(String.format(dataFileFormat, i) + DATA_EXTENTION))) {
-                        logger.warn("file_id " + filePosition + " is skipped. Moving to file_id " + i);
-                        processNext(i);
+                long next = getNextValue(filePosition);
+                for (long i = 0; i < senderLookupFiles; i++) {
+                    if (existsFile(dataPath.resolve(String.format(dataFileFormat, next) + DATA_EXTENTION))) {
+                        logger.warn("file_id " + filePosition + " is skipped. Moving to file_id " + next);
+                        processNext(next);
                         return;
+                        // continue
                     }
+                    next = getNextValue(next);
                 }
                 threadPool.schedule(senderInterval, Names.GENERIC, this);
                 // retry
@@ -1182,7 +1193,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                     IOUtils.closeQuietly(streamInput);
                     logger.info("Finished to process {}", path.toAbsolutePath());
 
-                    processNext(filePosition + 1);
+                    processNext(getNextValue(filePosition));
                 }
             } catch (final Exception e) {
                 IOUtils.closeQuietly(streamInput);
@@ -1454,5 +1465,12 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         return AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> {
             return p.toFile().exists();
         });
+    }
+
+    static long getNextValue(final long current) {
+        if (current == Long.MAX_VALUE || current < 0) {
+            return 1;
+        }
+        return current + 1;
     }
 }

@@ -446,6 +446,53 @@ public class IndexingProxyPluginTest extends TestCase {
 
     }
 
+    public void test_tmpexist() throws Exception {
+        new File(dataDir, String.format("%019d.tmp", 1)).createNewFile();
+        setUp((number, settingsBuilder) -> {
+            settingsBuilder.put("idxproxy.data.path", dataDir.getAbsolutePath());
+            settingsBuilder.put("idxproxy.sender.interval", "1s");
+            settingsBuilder.putArray("idxproxy.target.indices", "sample");
+        });
+
+        final Node node1 = runner.getNode(0);
+
+        final String alias = "sample";
+        final String index1 = "sample1";
+        final String type = "data";
+        runner.createIndex(index1, Settings.builder().build());
+        runner.updateAlias(alias, new String[] { index1 }, new String[0]);
+
+        runner.ensureYellow(".idxproxy");
+
+        // send requests to data file
+        indexRequest(node1, alias, type, 1000);
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        // flush data file
+        runner.refresh();
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        try (CurlResponse curlResponse =
+                Curl.post(node1, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(1, ((Integer) map.get("file_position")).intValue());
+        }
+
+        waitForNdocs(node1, index1, type, 1);
+
+        try (CurlResponse curlResponse =
+                Curl.get(node1, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(3, ((Integer) map.get("file_position")).intValue());
+        }
+    }
+
     private void assertSender(final Node node, final String index, final boolean found, final boolean running) throws IOException {
         try (CurlResponse curlResponse =
                 Curl.get(node, "/" + index + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
