@@ -45,7 +45,7 @@ public class IndexingProxyPluginTest extends TestCase {
         runner.onBuild((number, settingsBuilder) -> {
             settingsBuilder.put("http.cors.enabled", true);
             settingsBuilder.put("http.cors.allow-origin", "*");
-            settingsBuilder.putArray("discovery.zen.ping.unicast.hosts", "localhost:9301-9310");
+            settingsBuilder.putArray("discovery.zen.ping.unicast.hosts", "127.0.0.1:9301-9310");
             consumer.accept(number, settingsBuilder);
         }).build(newConfigs().clusterName(clusterName).numOfNode(numOfNode)
                 .pluginTypes("org.codelibs.elasticsearch.idxproxy.IndexingProxyPlugin"));
@@ -709,13 +709,15 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void waitForNdocs(final Node node, final String index1, final String type, final long num) throws Exception {
+        long actual = 0;
         for (int i = 0; i < 30; i++) {
             try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search")
                     .header("Content-Type", "application/json").body("{\"query\":{\"match_all\":{}}}").execute()) {
                 final Map<String, Object> map = curlResponse.getContentAsMap();
                 @SuppressWarnings("unchecked")
                 final Map<String, Object> hits = (Map<String, Object>) map.get("hits");
-                if (((Number) hits.get("total")).longValue() == num) {
+                actual = ((Number) hits.get("total")).longValue();
+                if (actual == num) {
                     Thread.sleep(3000L); // wait for bulk requests
                     return;
                 }
@@ -723,7 +725,7 @@ public class IndexingProxyPluginTest extends TestCase {
             runner.refresh();
             Thread.sleep(1000L);
         }
-        fail(num + " docs are not inserted.");
+        fail(num + " docs are not inserted. " + actual + " docs exist.");
     }
 
     private void assertNumOfDocs(final Node node1, final String index1, final String type, final long total) throws IOException {
