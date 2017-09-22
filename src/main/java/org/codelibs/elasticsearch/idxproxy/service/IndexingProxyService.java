@@ -363,6 +363,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             final String index = hit.getId();
             final Map<String, Object> source = hit.getSource();
             final String nodeName = (String) source.get(NODE_NAME);
+            if (Strings.isBlank(nodeName)) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("DocSender(" + index + ") is stopped");
+                }
+                checkSender(nodeMap, hitIter);
+                return;
+            }
             final DiscoveryNode node = nodeMap.get(nodeName);
             if (node == null) {
                 final String otherNode = getOtherNode(nodeName, nodeMap);
@@ -888,7 +895,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String workingNodeName = (String) source.get(NODE_NAME);
-                if (Strings.isBlank(workingNodeName)) {
+                if (!Strings.isBlank(workingNodeName) && !nodeName().equals(workingNodeName)) {
                     listener.onFailure(new ElasticsearchException("DocSender is working in " + workingNodeName));
                 } else {
                     final Number pos = (Number) source.get(FILE_POSITION);

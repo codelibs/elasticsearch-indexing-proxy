@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.function.BiConsumer;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.logging.log4j.util.Strings;
 import org.codelibs.elasticsearch.runner.ElasticsearchClusterRunner;
 import org.codelibs.elasticsearch.runner.net.Curl;
 import org.codelibs.elasticsearch.runner.net.CurlResponse;
@@ -490,6 +491,208 @@ public class IndexingProxyPluginTest extends TestCase {
             assertNotNull(map);
             assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
             assertEquals(3, ((Integer) map.get("file_position")).intValue());
+        }
+    }
+
+    public void test_restart_sender() throws Exception {
+        setUp((number, settingsBuilder) -> {
+            settingsBuilder.put("idxproxy.data.path", dataDir.getAbsolutePath());
+            settingsBuilder.put("idxproxy.sender.interval", "1s");
+            settingsBuilder.putArray("idxproxy.target.indices", "sample");
+            settingsBuilder.putArray("idxproxy.sender_nodes", "Node 3");
+            settingsBuilder.putArray("idxproxy.writer_nodes", "Node 1", "Node 2");
+        });
+
+        final Node node1 = runner.getNode(0);
+        final Node node2 = runner.getNode(1);
+        Node node3 = runner.getNode(2);
+
+        final String alias = "sample";
+        final String index1 = "sample1";
+        final String type = "data";
+        runner.createIndex(index1, Settings.builder().build());
+        runner.updateAlias(alias, new String[] { index1 }, new String[0]);
+
+        runner.ensureYellow(".idxproxy");
+
+        // update delayed timeout
+        try (CurlResponse curlResponse = Curl.put(node3, "/_all/_settings").header("Content-Type", "application/json")
+                .body("{\"settings\":{\"index.unassigned.node_left.delayed_timeout\":\"1s\"}}").execute()) {}
+
+        // send requests to data file
+        indexRequest(node2, alias, type, 1000);
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        // flush data file
+        runner.refresh();
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        // start sender
+        try (CurlResponse curlResponse =
+                Curl.post(node3, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(1, ((Integer) map.get("file_position")).intValue());
+            assertEquals("Node 3", map.get("node_name"));
+            assertEquals("index", map.get("doc_type"));
+        }
+
+        waitForNdocs(node1, index1, type, 1);
+
+        // check status
+        try (CurlResponse curlResponse =
+                Curl.get(node3, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(2, ((Integer) map.get("file_position")).intValue());
+            assertTrue(((Boolean) map.get("running")).booleanValue());
+            assertTrue(((Boolean) map.get("found")).booleanValue());
+            assertEquals("Node 3", map.get("node_name"));
+            assertEquals("index", map.get("doc_type"));
+        }
+
+        // stop sender
+        try (CurlResponse curlResponse =
+                Curl.delete(node3, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertTrue(((Boolean) map.get("found")).booleanValue());
+            assertTrue(((Boolean) map.get("stop")).booleanValue());
+            assertEquals("Node 3", map.get("working"));
+        }
+
+        // check status
+        boolean running = true;
+        for (int i = 0; i < 10; i++) {
+            try (CurlResponse curlResponse =
+                    Curl.get(node3, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+                final Map<String, Object> map = curlResponse.getContentAsMap();
+                assertNotNull(map);
+                assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+                assertEquals(2, ((Integer) map.get("file_position")).intValue());
+                running = ((Boolean) map.get("running")).booleanValue();
+                if (!running) {
+                    assertFalse(running);
+                    assertTrue(((Boolean) map.get("found")).booleanValue());
+                    assertEquals("", map.get("node_name"));
+                    assertEquals("index", map.get("doc_type"));
+                    break;
+                }
+            }
+            Thread.sleep(1000L);
+        }
+        if (running) {
+            fail();
+        }
+
+        // send requests to data file
+        indexRequest(node2, alias, type, 1000);
+
+        assertNumOfDocs(node1, index1, type, 1);
+
+        // flush data file
+        runner.refresh();
+
+        assertNumOfDocs(node1, index1, type, 1);
+
+        // start sender
+        try (CurlResponse curlResponse =
+                Curl.post(node3, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(2, ((Integer) map.get("file_position")).intValue());
+            assertEquals("Node 3", map.get("node_name"));
+            assertEquals("index", map.get("doc_type"));
+        }
+
+        waitForNdocs(node1, index1, type, 2);
+
+        // check status
+        try (CurlResponse curlResponse =
+                Curl.get(node3, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(3, ((Integer) map.get("file_position")).intValue());
+            assertTrue(((Boolean) map.get("running")).booleanValue());
+            assertTrue(((Boolean) map.get("found")).booleanValue());
+            assertEquals("Node 3", map.get("node_name"));
+            assertEquals("index", map.get("doc_type"));
+        }
+
+        node3.close();
+        try (CurlResponse curlResponse = Curl.get(node2, "/_cluster/health").header("Content-Type", "application/json")
+                .param("wait_for_nodes", "2").param("timeout", "30s").execute()) {}
+
+        // check status
+        for (int i = 0; i < 10; i++) {
+            try (CurlResponse curlResponse =
+                    Curl.get(node2, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+                final Map<String, Object> map = curlResponse.getContentAsMap();
+                assertNotNull(map);
+                assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+                assertEquals(3, ((Integer) map.get("file_position")).intValue());
+                running = ((Boolean) map.get("running")).booleanValue();
+                if (!running && Strings.isBlank(map.get("node_name").toString())) {
+                    assertFalse(running);
+                    assertTrue(((Boolean) map.get("found")).booleanValue());
+                    assertEquals("", map.get("node_name"));
+                    assertEquals("index", map.get("doc_type"));
+                    break;
+                }
+            }
+            Thread.sleep(1000L);
+        }
+        if (running) {
+            fail();
+        }
+
+        // send requests to data file
+        indexRequest(node2, alias, type, 1000);
+
+        assertNumOfDocs(node1, index1, type, 2);
+
+        // flush data file
+        runner.refresh();
+
+        assertNumOfDocs(node1, index1, type, 2);
+
+        // start node3
+        assertTrue(runner.startNode(2));
+        node3 = runner.getNode(2);
+        try (CurlResponse curlResponse = Curl.get(node2, "/_cluster/health").header("Content-Type", "application/json")
+                .param("wait_for_nodes", "3").param("timeout", "30s").execute()) {}
+
+        // start sender
+        try (CurlResponse curlResponse =
+                Curl.post(node3, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(3, ((Integer) map.get("file_position")).intValue());
+            assertEquals("Node 3", map.get("node_name"));
+            assertEquals("index", map.get("doc_type"));
+        }
+
+        waitForNdocs(node1, index1, type, 3);
+
+        // check status
+        try (CurlResponse curlResponse =
+                Curl.get(node3, "/" + index1 + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
+            final Map<String, Object> map = curlResponse.getContentAsMap();
+            assertNotNull(map);
+            assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
+            assertEquals(4, ((Integer) map.get("file_position")).intValue());
+            assertTrue(((Boolean) map.get("running")).booleanValue());
+            assertTrue(((Boolean) map.get("found")).booleanValue());
+            assertEquals("Node 3", map.get("node_name"));
+            assertEquals("index", map.get("doc_type"));
         }
     }
 
