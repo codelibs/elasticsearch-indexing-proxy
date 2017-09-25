@@ -1110,9 +1110,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         private void retryWithError(final String message, final Exception e) {
             errorCount++;
             if (errorCount > senderRetryCount) {
-                logger.error("DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
                 if (senderSkipErrorFile) {
+                    logger.error("DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
                     processNext(getNextValue(filePosition));
+                } else {
+                    logger.error("Stopped DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
                 }
             } else {
                 logger.warn("DocSender(" + index + ")@" + errorCount + ": " + message, e);
@@ -1223,7 +1225,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         threadPool.schedule(TimeValue.ZERO, Names.GENERIC, this);
                         // retry: success
                     }, e -> {
-                        retryWithError("Failed to access streamInput.", e);
+                        logger.error("DocSender(" + index + "): Failed to update config data.", e);
+                        threadPool.schedule(TimeValue.ZERO, Names.GENERIC, this);
                         // retry
                     }));
         }
