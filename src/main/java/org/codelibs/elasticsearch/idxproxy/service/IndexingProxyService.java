@@ -1002,6 +1002,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         final Map<String, Object> source = new HashMap<>();
                         source.putAll(hit.getSource());
                         final DocSender docSender = docSenderMap.get(hit.getId());
+                        source.put("index", hit.getId());
                         source.put("running", docSender != null && docSender.isRunning());
                         return source;
                     }).toArray(n -> new Map[n]));
