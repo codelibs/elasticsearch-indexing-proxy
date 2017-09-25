@@ -567,7 +567,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                             throw new ElasticsearchException("Could not open " + outputPath, e);
                         }
                     });
-                    logger.info("Opening " + outputPath.toAbsolutePath());
+                    logger.info("[Writer] Opening　 " + outputPath.toAbsolutePath());
                 }
             }
 
@@ -598,7 +598,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 throw new ElasticsearchException("Failed to move " + source.toAbsolutePath() + " to " + target.toAbsolutePath(), e);
             }
         });
-        logger.info("Finalized " + outputPath.toAbsolutePath());
+        logger.info("[Writer] Finalized " + outputPath.toAbsolutePath());
     }
 
     public <Response extends ActionResponse> void renew(final ActionListener<Response> listener) {
@@ -1069,7 +1069,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         public void run() {
             heartbeat = System.currentTimeMillis();
             if (terminated) {
-                logger.warn("Terminate DocIndexer(" + index + ")");
+                logger.warn("[Sender][" + index + "] Terminate DocIndexer");
                 return;
             }
             if (logger.isDebugEnabled()) {
@@ -1080,13 +1080,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                     final Map<String, Object> source = res.getSourceAsMap();
                     final String workingNodeName = (String) source.get(NODE_NAME);
                     if (!nodeName().equals(workingNodeName)) {
-                        logger.info("Stopped DocSender({}) because of working in [{}].", index, workingNodeName);
+                        logger.info("[Sender][{}] Stopped DocSender because of working in [{}].", index, workingNodeName);
                         docSenderMap.computeIfPresent(index, (k, v) -> v == this ? null : v);
                         // end
                     } else {
                         final Number pos = (Number) source.get(FILE_POSITION);
                         if (pos == null) {
-                            logger.error("Stopped DocSender({}). No file_position.", index);
+                            logger.error("[Sender][{}] Stopped DocSender. No file_position.", index);
                             docSenderMap.computeIfPresent(index, (k, v) -> v == this ? null : v);
                             // end: system error
                         } else {
@@ -1097,7 +1097,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         }
                     }
                 } else {
-                    logger.info("Stopped DocSender({}).", index);
+                    logger.info("[Sender][{}] Stopped DocSender.", index);
                     docSenderMap.computeIfPresent(index, (k, v) -> v == this ? null : v);
                     // end
                 }
@@ -1111,13 +1111,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             errorCount++;
             if (errorCount > senderRetryCount) {
                 if (senderSkipErrorFile) {
-                    logger.error("DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
+                    logger.error("[Sender][" + index + "][" + errorCount + "] Failed to process " + path.toAbsolutePath(), e);
                     processNext(getNextValue(filePosition));
                 } else {
-                    logger.error("Stopped DocSender(" + index + ")@" + errorCount + ": Failed to process " + path.toAbsolutePath(), e);
+                    logger.error("[Sender][" + index + "][" + errorCount + "] Stopped DocSender: Failed to process " + path.toAbsolutePath(), e);
                 }
             } else {
-                logger.warn("DocSender(" + index + ")@" + errorCount + ": " + message, e);
+                logger.warn("[Sender][" + index + "][" + errorCount + "] " + message, e);
                 threadPool.schedule(senderInterval, Names.GENERIC, this);
             }
         }
@@ -1128,7 +1128,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
             path = dataPath.resolve(String.format(dataFileFormat, filePosition) + DATA_EXTENTION);
             if (existsFile(path)) {
-                logger.info("[{}][{}] Indexing from {}", filePosition, version, path.toAbsolutePath());
+                logger.info("[Sender][{}] Indexing: {}", index, path.toAbsolutePath());
                 requestPosition = 0;
                 try {
                     processRequests(AccessController.doPrivileged((PrivilegedAction<IndexingProxyStreamInput>) () -> {
@@ -1150,7 +1150,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 long next = getNextValue(filePosition);
                 for (long i = 0; i < senderLookupFiles; i++) {
                     if (existsFile(dataPath.resolve(String.format(dataFileFormat, next) + DATA_EXTENTION))) {
-                        logger.warn("file_id " + filePosition + " is skipped. Moving to file_id " + next);
+                        logger.warn("[Sender][" + index + "] file_id " + filePosition + " is skipped. Moving to file_id " + next);
                         processNext(next);
                         return;
                         // continue
@@ -1166,7 +1166,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             heartbeat = System.currentTimeMillis();
             if (terminated) {
                 IOUtils.closeQuietly(streamInput);
-                logger.warn("Terminate DocIndexer(" + index + ")");
+                logger.warn("[Sender][" + index + "] Terminate DocIndexer.");
                 return;
             }
             requestPosition++;
@@ -1200,7 +1200,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                     }
                 } else {
                     IOUtils.closeQuietly(streamInput);
-                    logger.info("Finished to process {}", path.toAbsolutePath());
+                    logger.info("[Sender][{}] Indexed:  {}", index, path.toAbsolutePath());
 
                     processNext(getNextValue(filePosition));
                 }
@@ -1225,7 +1225,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         threadPool.schedule(TimeValue.ZERO, Names.GENERIC, this);
                         // retry: success
                     }, e -> {
-                        logger.error("DocSender(" + index + "): Failed to update config data.", e);
+                        logger.error("[Sender][" + index + "] Failed to update config data.", e);
                         threadPool.schedule(TimeValue.ZERO, Names.GENERIC, this);
                         // retry
                     }));
@@ -1260,7 +1260,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to process the bulk request.", e);
+                        logger.error("[Sender][" + index + "][" + requestErrorCount + "] Failed to process the bulk request.", e);
                         requestErrorCount = 0;
                         writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
                             logger.warn("Failed to store an error request.", ex);
@@ -1268,7 +1268,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         }));
                     } else {
                         if (logger.isDebugEnabled()) {
-                            logger.debug("[" + requestErrorCount + "] Failed to process the bulk request.", e);
+                            logger.debug("[Sender][" + index + "][" + requestErrorCount + "] Failed to process the bulk request.", e);
                         }
                         requestErrorCount++;
                         executeBulkRequest(streamInput, builder);
@@ -1296,10 +1296,10 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to update requests.", e);
+                        logger.error("[Sender][" + index + "][" + requestErrorCount + "] Failed to update requests.", e);
                         requestErrorCount = 0;
                         writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
-                            logger.warn("Failed to store an error request.", ex);
+                            logger.warn("[Sender][" + index + "] Failed to store an error request.", ex);
                             processRequests(streamInput);
                         }));
                     } else {
@@ -1332,11 +1332,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to update [" + builder.request().index() + "]["
+                        logger.error("[Sender][" + index + "][" + requestErrorCount + "] Failed to update [" + builder.request().index() + "]["
                                 + builder.request().type() + "][" + builder.request().id() + "]", e);
                         requestErrorCount = 0;
                         writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
-                            logger.warn("Failed to store an error request.", ex);
+                            logger.warn("[Sender][" + index + "] Failed to store an error request.", ex);
                             processRequests(streamInput);
                         }));
                     } else {
@@ -1370,11 +1370,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to index [" + builder.request().index() + "]["
+                        logger.error("[Sender][" + index + "][" + requestErrorCount + "] Failed to index [" + builder.request().index() + "]["
                                 + builder.request().type() + "][" + builder.request().id() + "]", e);
                         requestErrorCount = 0;
                         writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
-                            logger.warn("Failed to store an error request.", ex);
+                            logger.warn("[Sender][" + index + "] Failed to store an error request.", ex);
                             processRequests(streamInput);
                         }));
                     } else {
@@ -1408,11 +1408,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to delete [" + Arrays.toString(builder.request().indices()) + "]",
+                        logger.error("[Sender][" + index + "][" + requestErrorCount + "] Failed to delete [" + Arrays.toString(builder.request().indices()) + "]",
                                 e);
                         requestErrorCount = 0;
                         writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
-                            logger.warn("Failed to store an error request.", ex);
+                            logger.warn("[Sender][" + index + "] Failed to store an error request.", ex);
                             processRequests(streamInput);
                         }));
                     } else {
@@ -1447,11 +1447,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }, e -> {
                 if (senderRequestRetryCount >= 0) {
                     if (requestErrorCount > senderRequestRetryCount) {
-                        logger.error("[" + requestErrorCount + "] Failed to delete [" + builder.request().index() + "]["
+                        logger.error("[Sender][" + index + "][" + requestErrorCount + "] Failed to delete [" + builder.request().index() + "]["
                                 + builder.request().type() + "][" + builder.request().id() + "]", e);
                         requestErrorCount = 0;
                         writeError(requestPosition, builder.request(), wrap(r -> processRequests(streamInput), ex -> {
-                            logger.warn("Failed to store an error request.", ex);
+                            logger.warn("[Sender][" + index + "] Failed to store an error request.", ex);
                             processRequests(streamInput);
                         }));
                     } else {
