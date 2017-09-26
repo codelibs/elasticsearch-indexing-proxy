@@ -1004,6 +1004,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         final DocSender docSender = docSenderMap.get(hit.getId());
                         source.put("index", hit.getId());
                         source.put("running", docSender != null && docSender.isRunning());
+                        if (docSender != null) {
+                            source.put("heartbeat", docSender.getHeartbeat());
+                        }
                         return source;
                     }).toArray(n -> new Map[n]));
                     listener.onResponse(params);
@@ -1019,6 +1022,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 params.put("found", true);
                 final DocSender docSender = docSenderMap.get(res.getId());
                 params.put("running", docSender != null && docSender.isRunning());
+                if (docSender != null) {
+                    source.put("heartbeat", docSender.getHeartbeat());
+                }
             } else {
                 params.put("found", false);
             }
@@ -1053,6 +1059,10 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
         public DocSender(final String index) {
             this.index = index;
+        }
+
+        public Date getHeartbeat() {
+            return new Date(heartbeat);
         }
 
         public void terminate() {
