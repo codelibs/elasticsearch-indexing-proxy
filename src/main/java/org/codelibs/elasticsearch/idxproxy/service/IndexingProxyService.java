@@ -928,7 +928,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         builder.execute(wrap(res -> {
             if (res.getResult() == Result.CREATED || res.getResult() == Result.UPDATED) {
                 final DocSender sender = new DocSender(index);
-                final DocSender oldSender = docSenderMap.putIfAbsent(index, sender);
+                final DocSender oldSender = docSenderMap.put(index, sender);
                 if (oldSender != null) {
                     oldSender.terminate();
                 }
