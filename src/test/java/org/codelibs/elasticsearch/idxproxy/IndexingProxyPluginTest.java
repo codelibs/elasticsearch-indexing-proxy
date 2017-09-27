@@ -126,6 +126,13 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
         }
 
+        try (CurlResponse curlResponse = Curl.get(node1, "/_idxproxy/request").header("Content-Type", "application/json")
+                .param("position", "1").execute()) {
+            final String content = curlResponse.getContentAsString();
+            assertNotNull(content);
+            System.out.println(content);
+        }
+
         assertFilePosition(node1, index1, 2);
 
         // send requests to data file

@@ -8,6 +8,7 @@ import java.util.function.Supplier;
 
 import org.codelibs.elasticsearch.idxproxy.action.ProxyActionFilter;
 import org.codelibs.elasticsearch.idxproxy.rest.RestIndexingProxyProcessAction;
+import org.codelibs.elasticsearch.idxproxy.rest.RestIndexingProxyRequestAction;
 import org.codelibs.elasticsearch.idxproxy.service.IndexingProxyService;
 import org.elasticsearch.action.support.ActionFilter;
 import org.elasticsearch.client.Client;
@@ -46,7 +47,8 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
     public List<RestHandler> getRestHandlers(final Settings settings, final RestController restController,
             final ClusterSettings clusterSettings, final IndexScopedSettings indexScopedSettings, final SettingsFilter settingsFilter,
             final IndexNameExpressionResolver indexNameExpressionResolver, final Supplier<DiscoveryNodes> nodesInCluster) {
-        return Arrays.asList(new RestIndexingProxyProcessAction(settings, restController, pluginComponent));
+        return Arrays.asList(new RestIndexingProxyProcessAction(settings, restController, pluginComponent),
+                new RestIndexingProxyRequestAction(settings, restController, pluginComponent));
     }
 
     @Override

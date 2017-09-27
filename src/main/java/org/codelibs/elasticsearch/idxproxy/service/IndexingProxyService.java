@@ -76,8 +76,10 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
+import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.query.QueryBuilders;
@@ -1032,9 +1034,157 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }, listener::onFailure));
     }
 
+    public void dumpRequests(final int filePosition, ActionListener<String> listener) {
+        final Path path = dataPath.resolve(String.format(dataFileFormat, filePosition) + DATA_EXTENTION);
+        if (existsFile(path)) {
+
+            try (IndexingProxyStreamInput streamInput = AccessController.doPrivileged((PrivilegedAction<IndexingProxyStreamInput>) () -> {
+                try {
+                    return new IndexingProxyStreamInput(Files.newInputStream(path), namedWriteableRegistry);
+                } catch (final IOException e) {
+                    throw new ElasticsearchException("Failed to read " + path.toAbsolutePath(), e);
+                }
+            })) {
+                final StringBuilder buf = new StringBuilder(10000);
+                while (streamInput.available() > 0) {
+                    final short classType = streamInput.readShort();
+                    switch (classType) {
+                    case RequestUtils.TYPE_DELETE:
+                        DeleteRequest deleteRequest = createDeleteRequest(streamInput, null).request();
+                        buf.append(deleteRequest.toString());
+                        break;
+                    case RequestUtils.TYPE_DELETE_BY_QUERY:
+                        DeleteByQueryRequest deleteByQueryRequest = createDeleteByQueryRequest(streamInput, null).request();
+                        buf.append(deleteByQueryRequest.toString());
+                        buf.append(' ');
+                        buf.append(deleteByQueryRequest.getSearchRequest().toString().replace("\n", ""));
+                        break;
+                    case RequestUtils.TYPE_INDEX:
+                        IndexRequest indexRequest = createIndexRequest(streamInput, null).request();
+                        buf.append(indexRequest.toString());
+                        break;
+                    case RequestUtils.TYPE_UPDATE:
+                        UpdateRequest updateRequest = createUpdateRequest(streamInput, null).request();
+                        buf.append("update {[").append(updateRequest.index()).append("][").append(updateRequest.type()).append("][")
+                                .append(updateRequest.id()).append("] source[")
+                                .append(updateRequest.toXContent(JsonXContent.contentBuilder(), ToXContent.EMPTY_PARAMS).string())
+                                .append("]}");
+                        break;
+                    case RequestUtils.TYPE_UPDATE_BY_QUERY:
+                        UpdateByQueryRequest updateByQueryRequest = createUpdateByQueryRequest(streamInput, null).request();
+                        buf.append(updateByQueryRequest.toString());
+                        buf.append(' ');
+                        buf.append(updateByQueryRequest.getSearchRequest().toString().replace("\n", ""));
+                        break;
+                    case RequestUtils.TYPE_BULK:
+                        BulkRequest bulkRequest = createBulkRequest(streamInput, null).request();
+                        buf.append("bulk [");
+                        buf.append(bulkRequest.requests().stream().map(req -> {
+                            if (req instanceof UpdateRequest) {
+                                UpdateRequest upreq = (UpdateRequest) req;
+                                try {
+                                    return "update {[" + upreq.index() + "][" + upreq.type() + "][" + upreq.id() + "] source["
+                                            + upreq.toXContent(JsonXContent.contentBuilder(), ToXContent.EMPTY_PARAMS).string() + "]}";
+                                } catch (IOException e) {
+                                    return e.getMessage();
+                                }
+                            } else {
+                                return req.toString();
+                            }
+                        }).collect(Collectors.joining(",")));
+                        buf.append("]");
+                        break;
+                    default:
+                        listener.onFailure(new ElasticsearchException("Unknown request type: " + classType));
+                    }
+                    buf.append('\n');
+                }
+                listener.onResponse(buf.toString());
+            } catch (IOException e) {
+                listener.onFailure(e);
+            }
+        } else {
+            listener.onFailure(new ElasticsearchException("The data file does not exist: " + dataPath));
+        }
+    }
+
     public boolean isRunning(final String index) {
         final DocSender docSender = docSenderMap.get(index);
         return docSender != null && docSender.isRunning();
+    }
+
+    private IndexRequestBuilder createIndexRequest(final StreamInput streamInput, final String index) throws IOException {
+        final IndexRequestBuilder builder = client.prepareIndex();
+        final IndexRequest request = builder.request();
+        request.readFrom(streamInput);
+        if (index != null) {
+            request.index(index);
+        }
+        return builder;
+    }
+
+    private UpdateByQueryRequestBuilder createUpdateByQueryRequest(final StreamInput streamInput, final String index) throws IOException {
+        final UpdateByQueryRequestBuilder builder = client.prepareExecute(UpdateByQueryAction.INSTANCE);
+        final UpdateByQueryRequest request = builder.request();
+        request.readFrom(streamInput);
+        if (index != null) {
+            request.indices(index);
+        }
+        return builder;
+    }
+
+    private UpdateRequestBuilder createUpdateRequest(final StreamInput streamInput, final String index) throws IOException {
+        final UpdateRequestBuilder builder = client.prepareUpdate();
+        final UpdateRequest request = builder.request();
+        request.readFrom(streamInput);
+        if (index != null) {
+            request.index(index);
+        }
+        return builder;
+    }
+
+    private DeleteByQueryRequestBuilder createDeleteByQueryRequest(final StreamInput streamInput, final String index) throws IOException {
+        final DeleteByQueryRequestBuilder builder = client.prepareExecute(DeleteByQueryAction.INSTANCE);
+        final DeleteByQueryRequest request = builder.request();
+        request.readFrom(streamInput);
+        if (index != null) {
+            request.indices(index);
+        }
+        return builder;
+    }
+
+    private DeleteRequestBuilder createDeleteRequest(final StreamInput streamInput, final String index) throws IOException {
+        final DeleteRequestBuilder builder = client.prepareDelete();
+        final DeleteRequest request = builder.request();
+        request.readFrom(streamInput);
+        if (index != null) {
+            request.index(index);
+        }
+        return builder;
+    }
+
+    private BulkRequestBuilder createBulkRequest(final StreamInput streamInput, final String index) throws IOException {
+        final BulkRequestBuilder builder = client.prepareBulk();
+        final BulkRequest request = builder.request();
+        request.readFrom(streamInput);
+        if (index != null) {
+            builder.request().requests().stream().forEach(req -> {
+                if (req instanceof DeleteRequest) {
+                    ((DeleteRequest) req).index(index);
+                } else if (req instanceof DeleteByQueryRequest) {
+                    ((DeleteByQueryRequest) req).indices(index);
+                } else if (req instanceof IndexRequest) {
+                    ((IndexRequest) req).index(index);
+                } else if (req instanceof UpdateRequest) {
+                    ((UpdateRequest) req).index(index);
+                } else if (req instanceof UpdateByQueryRequest) {
+                    ((UpdateByQueryRequest) req).indices(index);
+                } else {
+                    throw new ElasticsearchException("Unsupported request in bulk: " + req);
+                }
+            });
+        }
+        return builder;
     }
 
     class DocSender implements Runnable {
@@ -1243,24 +1393,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
 
         private void processBulkRequest(final StreamInput streamInput) throws IOException {
-            final BulkRequestBuilder builder = client.prepareBulk();
-            final BulkRequest request = builder.request();
-            request.readFrom(streamInput);
-            builder.request().requests().stream().forEach(req -> {
-                if (req instanceof DeleteRequest) {
-                    ((DeleteRequest) req).index(index);
-                } else if (req instanceof DeleteByQueryRequest) {
-                    ((DeleteByQueryRequest) req).indices(index);
-                } else if (req instanceof IndexRequest) {
-                    ((IndexRequest) req).index(index);
-                } else if (req instanceof UpdateRequest) {
-                    ((UpdateRequest) req).index(index);
-                } else if (req instanceof UpdateByQueryRequest) {
-                    ((UpdateByQueryRequest) req).indices(index);
-                } else {
-                    throw new ElasticsearchException("Unsupported request in bulk: " + req);
-                }
-            });
+            final BulkRequestBuilder builder = createBulkRequest(streamInput, index);
             executeBulkRequest(streamInput, builder);
         }
 
@@ -1293,10 +1426,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
 
         private void processUpdateByQueryRequest(final StreamInput streamInput) throws IOException {
-            final UpdateByQueryRequestBuilder builder = client.prepareExecute(UpdateByQueryAction.INSTANCE);
-            final UpdateByQueryRequest request = builder.request();
-            request.readFrom(streamInput);
-            request.indices(index);
+            final UpdateByQueryRequestBuilder builder = createUpdateByQueryRequest(streamInput, index);
             executeUpdateByQueryRequest(streamInput, builder);
         }
 
@@ -1329,10 +1459,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
 
         private void processUpdateRequest(final StreamInput streamInput) throws IOException {
-            final UpdateRequestBuilder builder = client.prepareUpdate();
-            final UpdateRequest request = builder.request();
-            request.readFrom(streamInput);
-            request.index(index);
+            final UpdateRequestBuilder builder = createUpdateRequest(streamInput, index);
             executeUpdateRequest(streamInput, builder);
         }
 
@@ -1367,10 +1494,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
 
         private void processIndexRequest(final StreamInput streamInput) throws IOException {
-            final IndexRequestBuilder builder = client.prepareIndex();
-            final IndexRequest request = builder.request();
-            request.readFrom(streamInput);
-            request.index(index);
+            final IndexRequestBuilder builder = createIndexRequest(streamInput, index);
             executeIndexRequest(streamInput, builder);
         }
 
@@ -1405,10 +1529,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
 
         private void processDeleteByQueryRequest(final StreamInput streamInput) throws IOException {
-            final DeleteByQueryRequestBuilder builder = client.prepareExecute(DeleteByQueryAction.INSTANCE);
-            final DeleteByQueryRequest request = builder.request();
-            request.readFrom(streamInput);
-            request.indices(index);
+            final DeleteByQueryRequestBuilder builder = createDeleteByQueryRequest(streamInput, index);
             executeDeleteByQueryRequest(streamInput, builder);
         }
 
@@ -1444,10 +1565,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
 
         private void processDeleteRequest(final StreamInput streamInput) throws IOException {
-            final DeleteRequestBuilder builder = client.prepareDelete();
-            final DeleteRequest request = builder.request();
-            request.readFrom(streamInput);
-            request.index(index);
+            final DeleteRequestBuilder builder = createDeleteRequest(streamInput, index);
             executeDeleteRequest(streamInput, builder);
         }
 
