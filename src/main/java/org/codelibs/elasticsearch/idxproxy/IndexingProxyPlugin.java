@@ -3,6 +3,7 @@ package org.codelibs.elasticsearch.idxproxy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -19,8 +20,12 @@ import org.elasticsearch.common.component.LifecycleComponent;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.IndexScopedSettings;
 import org.elasticsearch.common.settings.Setting;
+import org.elasticsearch.common.settings.Setting.Property;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsFilter;
+import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.plugins.ActionPlugin;
 import org.elasticsearch.plugins.Plugin;
@@ -31,6 +36,74 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.watcher.ResourceWatcherService;
 
 public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
+
+    public static final Setting<String> SETTING_INXPROXY_DATA_FILE_FORMAT =
+            Setting.simpleString("idxproxy.data.file.format", Property.NodeScope);
+
+    public static final Setting<String> SETTING_INXPROXY_DATA_PATH = Setting.simpleString("idxproxy.data.path", Property.NodeScope);
+
+    public static final Setting<List<String>> SETTING_INXPROXY_TARGET_INDICES =
+            Setting.listSetting("idxproxy.target.indices", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
+
+    public static final Setting<ByteSizeValue> SETTING_INXPROXY_DATA_FILE_SIZE =
+            Setting.memorySizeSetting("idxproxy.data.file_size", new ByteSizeValue(100, ByteSizeUnit.MB), Property.NodeScope);
+
+    public static final Setting<TimeValue> SETTING_INXPROXY_SENDER_INTERVAL =
+            Setting.timeSetting("idxproxy.sender.interval", TimeValue.timeValueSeconds(30), Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_SENDER_RETRY_COUNT =
+            Setting.intSetting("idxproxy.sender.retry_count", 10, Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_SENDER_REQUEST_RETRY_COUNT =
+            Setting.intSetting("idxproxy.sender.request.retry_count", 3, Property.NodeScope);
+
+    public static final Setting<Boolean> SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE =
+            Setting.boolSetting("idxproxy.sender.skip.error_file", true, Property.NodeScope);
+
+    public static final Setting<TimeValue> SETTING_INXPROXY_SENDER_ALIVE_TIME =
+            Setting.timeSetting("idxproxy.sender.alive_time", TimeValue.timeValueMinutes(10), Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_SENDER_LOOKUP_FILES =
+            Setting.intSetting("idxproxy.sender.lookup_files", 1000, Property.NodeScope);
+
+    public static final Setting<TimeValue> SETTING_INXPROXY_MONITOR_INTERVAL =
+            Setting.timeSetting("idxproxy.monitor.interval", TimeValue.timeValueMinutes(1), Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_WRITER_RETRY_COUNT =
+            Setting.intSetting("idxproxy.writer.retry_count", 10, Property.NodeScope);
+
+    public static final Setting<List<String>> SETTING_INXPROXY_SENDER_NODES =
+            Setting.listSetting("idxproxy.sender_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
+
+    public static final Setting<List<String>> SETTING_INXPROXY_WRITE_NODES =
+            Setting.listSetting("idxproxy.writer_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
+
+    public static final Setting<Boolean> SETTING_INXPROXY_FLUSH_PER_DOC =
+            Setting.boolSetting("idxproxy.flush_per_doc", true, Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_NUMBER_OF_SHARDS =
+            Setting.intSetting("idxproxy.number_of_shards", 1, Property.NodeScope);
+
+    public static final Setting<Integer> SETTING_INXPROXY_NUMBER_OF_REPLICAS =
+            Setting.intSetting("idxproxy.number_of_replicas", 1, Property.NodeScope);
+
+    public static final String DATA_EXTENTION = ".dat";
+
+    public static final String TYPE_NAME = "config";
+
+    public static final String INDEX_NAME = ".idxproxy";
+
+    public static final String NODE_NAME = "node_name";
+
+    public static final String FILE_POSITION = "file_position";
+
+    public static final String TIMESTAMP = "@timestamp";
+
+    public static final String ACTION_IDXPROXY_WRITE = "internal:indices/idxproxy/write";
+
+    public static final String ACTION_IDXPROXY_PING = "internal:indices/idxproxy/ping";
+
+    public static final String ACTION_IDXPROXY_CREATE = "internal:indices/idxproxy/create";
 
     private final PluginComponent pluginComponent = new PluginComponent();
 
@@ -58,22 +131,22 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
 
     @Override
     public List<Setting<?>> getSettings() {
-        return Arrays.asList(IndexingProxyService.SETTING_INXPROXY_DATA_PATH, //
-                IndexingProxyService.SETTING_INXPROXY_DATA_FILE_FORMAT, //
-                IndexingProxyService.SETTING_INXPROXY_DATA_FILE_SIZE, //
-                IndexingProxyService.SETTING_INXPROXY_SENDER_INTERVAL, //
-                IndexingProxyService.SETTING_INXPROXY_SENDER_RETRY_COUNT, //
-                IndexingProxyService.SETTING_INXPROXY_SENDER_REQUEST_RETRY_COUNT, //
-                IndexingProxyService.SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE, //
-                IndexingProxyService.SETTING_INXPROXY_SENDER_LOOKUP_FILES, //
-                IndexingProxyService.SETTING_INXPROXY_MONITOR_INTERVAL, //
-                IndexingProxyService.SETTING_INXPROXY_WRITER_RETRY_COUNT, //
-                IndexingProxyService.SETTING_INXPROXY_SENDER_NODES, //
-                IndexingProxyService.SETTING_INXPROXY_WRITE_NODES, //
-                IndexingProxyService.SETTING_INXPROXY_FLUSH_PER_DOC, //
-                IndexingProxyService.SETTING_INXPROXY_NUMBER_OF_REPLICAS, //
-                IndexingProxyService.SETTING_INXPROXY_NUMBER_OF_SHARDS, //
-                IndexingProxyService.SETTING_INXPROXY_TARGET_INDICES);
+        return Arrays.asList(IndexingProxyPlugin.SETTING_INXPROXY_DATA_PATH, //
+                IndexingProxyPlugin.SETTING_INXPROXY_DATA_FILE_FORMAT, //
+                IndexingProxyPlugin.SETTING_INXPROXY_DATA_FILE_SIZE, //
+                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_INTERVAL, //
+                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_RETRY_COUNT, //
+                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_REQUEST_RETRY_COUNT, //
+                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE, //
+                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_LOOKUP_FILES, //
+                IndexingProxyPlugin.SETTING_INXPROXY_MONITOR_INTERVAL, //
+                IndexingProxyPlugin.SETTING_INXPROXY_WRITER_RETRY_COUNT, //
+                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_NODES, //
+                IndexingProxyPlugin.SETTING_INXPROXY_WRITE_NODES, //
+                IndexingProxyPlugin.SETTING_INXPROXY_FLUSH_PER_DOC, //
+                IndexingProxyPlugin.SETTING_INXPROXY_NUMBER_OF_REPLICAS, //
+                IndexingProxyPlugin.SETTING_INXPROXY_NUMBER_OF_SHARDS, //
+                IndexingProxyPlugin.SETTING_INXPROXY_TARGET_INDICES);
     }
 
     @Override

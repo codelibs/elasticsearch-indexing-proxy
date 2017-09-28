@@ -22,7 +22,7 @@ public class PingRequestHandler implements TransportRequestHandler<PingRequest> 
         if (indexingProxyService.isRunning(request.getIndex())) {
             channel.sendResponse(new PingResponse(true, true));
         } else {
-            indexingProxyService.startDocSender(request.getIndex(), 0, wrap(response -> {
+            indexingProxyService.startRequestSender(request.getIndex(), 0, wrap(response -> {
                 channel.sendResponse(new PingResponse(true, false));
             }, e -> {
                 try {
