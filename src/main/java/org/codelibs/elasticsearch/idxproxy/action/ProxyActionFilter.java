@@ -96,7 +96,7 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
                                 r.version(), Result.CREATED);
                         responseList.add(new BulkItemResponse(i, r.opType(), response));
                     } else if (dwr instanceof DeleteRequest) {
-                        final UpdateRequest r = (UpdateRequest) dwr;
+                        final DeleteRequest r = (DeleteRequest) dwr;
                         final String id = r.id() == null ? INDEX_UUID : r.id();
                         final DeleteResponse response =
                                 new DeleteResponse(new ShardId(new Index(r.index(), INDEX_UUID), 0), r.type(), id, r.version(), true);
