@@ -132,20 +132,20 @@ public class RequestSender implements Runnable {
             return;
         }
         if (logger.isDebugEnabled()) {
-            logger.debug("Running DocSender(" + index + ")");
+            logger.debug("Running RequestSender(" + index + ")");
         }
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String workingNodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
                 if (!nodeName.equals(workingNodeName)) {
-                    logger.info("[Sender][{}] Stopped DocSender because of working in [{}].", index, workingNodeName);
+                    logger.info("[Sender][{}] Stopped RequestSender because of working in [{}].", index, workingNodeName);
                     docSenderMap.computeIfPresent(index, (k, v) -> v == this ? null : v);
                     // end
                 } else {
                     final Number pos = (Number) source.get(IndexingProxyPlugin.FILE_POSITION);
                     if (pos == null) {
-                        logger.error("[Sender][{}] Stopped DocSender. No file_position.", index);
+                        logger.error("[Sender][{}] Stopped RequestSender. No file_position.", index);
                         docSenderMap.computeIfPresent(index, (k, v) -> v == this ? null : v);
                         // end: system error
                     } else {
@@ -156,12 +156,12 @@ public class RequestSender implements Runnable {
                     }
                 }
             } else {
-                logger.info("[Sender][{}] Stopped DocSender.", index);
+                logger.info("[Sender][{}] Stopped RequestSender.", index);
                 docSenderMap.computeIfPresent(index, (k, v) -> v == this ? null : v);
                 // end
             }
         }, e -> {
-            retryWithError("DocSender data is not found.", e);
+            retryWithError("RequestSender data is not found.", e);
             // retry
         }));
     }
@@ -173,7 +173,7 @@ public class RequestSender implements Runnable {
                 logger.error("[Sender][" + index + "][" + errorCount + "] Failed to process " + path.toAbsolutePath(), e);
                 processNext(getNextValue(filePosition));
             } else {
-                logger.error("[Sender][" + index + "][" + errorCount + "] Stopped DocSender: Failed to process " + path.toAbsolutePath(),
+                logger.error("[Sender][" + index + "][" + errorCount + "] Stopped RequestSender: Failed to process " + path.toAbsolutePath(),
                         e);
             }
         } else {
@@ -184,7 +184,7 @@ public class RequestSender implements Runnable {
 
     private void process(final long filePosition) {
         if (logger.isDebugEnabled()) {
-            logger.debug("DocSender(" + index + ") processes " + filePosition);
+            logger.debug("RequestSender(" + index + ") processes " + filePosition);
         }
         path = dataPath.resolve(String.format(dataFileFormat, filePosition) + IndexingProxyPlugin.DATA_EXTENTION);
         if (FileAccessUtils.existsFile(path)) {
@@ -233,7 +233,7 @@ public class RequestSender implements Runnable {
         requestPosition++;
         try {
             if (logger.isDebugEnabled()) {
-                logger.debug("DocSender(" + index + ") is processing requests.");
+                logger.debug("RequestSender(" + index + ") is processing requests.");
             }
             if (streamInput.available() > 0) {
                 final short classType = streamInput.readShort();
@@ -274,7 +274,7 @@ public class RequestSender implements Runnable {
 
     private void processNext(final long position) {
         if (logger.isDebugEnabled()) {
-            logger.debug("DocSender(" + index + ") moves next files.");
+            logger.debug("RequestSender(" + index + ") moves next files.");
         }
         final Map<String, Object> source = new HashMap<>();
         source.put(IndexingProxyPlugin.FILE_POSITION, position);
