@@ -12,10 +12,6 @@ import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.DocWriteResponse.Result;
-import org.elasticsearch.action.admin.indices.flush.FlushAction;
-import org.elasticsearch.action.admin.indices.forcemerge.ForceMergeAction;
-import org.elasticsearch.action.admin.indices.refresh.RefreshAction;
-import org.elasticsearch.action.admin.indices.upgrade.post.UpgradeAction;
 import org.elasticsearch.action.bulk.BulkAction;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
@@ -195,11 +191,7 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
             indexingProxyService.write(request, ActionListener.wrap(res -> {
                 listener.onResponse(executor.get());
             }, listener::onFailure));
-        } else if (FlushAction.NAME.equals(action)//
-                || ForceMergeAction.NAME.equals(action)//
-                || RefreshAction.NAME.equals(action)//
-                || UpgradeAction.NAME.equals(action)//
-        ) {
+        } else if (indexingProxyService.isRenewAction(action)) {
             indexingProxyService.renew(ActionListener.wrap(res -> {
                 chain.proceed(task, action, request, listener);
             }, listener::onFailure));

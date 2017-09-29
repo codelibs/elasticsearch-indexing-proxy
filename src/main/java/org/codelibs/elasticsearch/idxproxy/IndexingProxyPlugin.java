@@ -11,6 +11,10 @@ import org.codelibs.elasticsearch.idxproxy.action.ProxyActionFilter;
 import org.codelibs.elasticsearch.idxproxy.rest.RestIndexingProxyProcessAction;
 import org.codelibs.elasticsearch.idxproxy.rest.RestIndexingProxyRequestAction;
 import org.codelibs.elasticsearch.idxproxy.service.IndexingProxyService;
+import org.elasticsearch.action.admin.indices.flush.FlushAction;
+import org.elasticsearch.action.admin.indices.forcemerge.ForceMergeAction;
+import org.elasticsearch.action.admin.indices.refresh.RefreshAction;
+import org.elasticsearch.action.admin.indices.upgrade.post.UpgradeAction;
 import org.elasticsearch.action.support.ActionFilter;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
@@ -87,6 +91,14 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
     public static final Setting<Integer> SETTING_INXPROXY_NUMBER_OF_REPLICAS =
             Setting.intSetting("idxproxy.number_of_replicas", 1, Property.NodeScope);
 
+    public static final Setting<List<String>> SETTING_INXPROXY_RENEW_ACTIONS = Setting.listSetting("idxproxy.renew_actions",
+            Arrays.asList(FlushAction.NAME, ForceMergeAction.NAME, RefreshAction.NAME, UpgradeAction.NAME), s -> {
+                if (s.indexOf(':') >= 0) {
+                    return s;
+                }
+                return "indices:admin/" + s;
+            }, Property.NodeScope);
+
     public static final String DATA_EXTENTION = ".dat";
 
     public static final String TYPE_NAME = "config";
@@ -131,22 +143,23 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
 
     @Override
     public List<Setting<?>> getSettings() {
-        return Arrays.asList(IndexingProxyPlugin.SETTING_INXPROXY_DATA_PATH, //
-                IndexingProxyPlugin.SETTING_INXPROXY_DATA_FILE_FORMAT, //
-                IndexingProxyPlugin.SETTING_INXPROXY_DATA_FILE_SIZE, //
-                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_INTERVAL, //
-                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_RETRY_COUNT, //
-                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_REQUEST_RETRY_COUNT, //
-                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE, //
-                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_LOOKUP_FILES, //
-                IndexingProxyPlugin.SETTING_INXPROXY_MONITOR_INTERVAL, //
-                IndexingProxyPlugin.SETTING_INXPROXY_WRITER_RETRY_COUNT, //
-                IndexingProxyPlugin.SETTING_INXPROXY_SENDER_NODES, //
-                IndexingProxyPlugin.SETTING_INXPROXY_WRITE_NODES, //
-                IndexingProxyPlugin.SETTING_INXPROXY_FLUSH_PER_DOC, //
-                IndexingProxyPlugin.SETTING_INXPROXY_NUMBER_OF_REPLICAS, //
-                IndexingProxyPlugin.SETTING_INXPROXY_NUMBER_OF_SHARDS, //
-                IndexingProxyPlugin.SETTING_INXPROXY_TARGET_INDICES);
+        return Arrays.asList(SETTING_INXPROXY_DATA_PATH, //
+                SETTING_INXPROXY_DATA_FILE_FORMAT, //
+                SETTING_INXPROXY_DATA_FILE_SIZE, //
+                SETTING_INXPROXY_SENDER_INTERVAL, //
+                SETTING_INXPROXY_SENDER_RETRY_COUNT, //
+                SETTING_INXPROXY_SENDER_REQUEST_RETRY_COUNT, //
+                SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE, //
+                SETTING_INXPROXY_SENDER_LOOKUP_FILES, //
+                SETTING_INXPROXY_MONITOR_INTERVAL, //
+                SETTING_INXPROXY_WRITER_RETRY_COUNT, //
+                SETTING_INXPROXY_SENDER_NODES, //
+                SETTING_INXPROXY_WRITE_NODES, //
+                SETTING_INXPROXY_FLUSH_PER_DOC, //
+                SETTING_INXPROXY_NUMBER_OF_REPLICAS, //
+                SETTING_INXPROXY_NUMBER_OF_SHARDS, //
+                SETTING_INXPROXY_TARGET_INDICES, //
+                SETTING_INXPROXY_RENEW_ACTIONS);
     }
 
     @Override

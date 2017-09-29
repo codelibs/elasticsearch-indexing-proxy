@@ -703,6 +703,46 @@ public class IndexingProxyPluginTest extends TestCase {
         }
     }
 
+    public void test_renew_action() throws Exception {
+        setUp((number, settingsBuilder) -> {
+            settingsBuilder.put("idxproxy.data.path", dataDir.getAbsolutePath());
+            settingsBuilder.put("idxproxy.sender.interval", "1s");
+            settingsBuilder.putArray("idxproxy.target.indices", "sample");
+            settingsBuilder.putArray("idxproxy.renew_actions", "flush");
+        });
+
+        final Node node1 = runner.getNode(0);
+
+        final String alias = "sample";
+        final String index1 = "sample1";
+        final String type = "data";
+        runner.createIndex(index1, Settings.builder().build());
+        runner.updateAlias(alias, new String[] { index1 }, new String[0]);
+
+        runner.ensureYellow(".idxproxy");
+
+        // send requests to data file
+        indexRequest(node1, alias, type, 1000);
+        createRequest(node1, alias, type, 1001);
+        updateRequest(node1, alias, type, 1001);
+        createRequest(node1, alias, type, 1002);
+        updateByQueryRequest(node1, alias, type, 1002);
+        createRequest(node1, alias, type, 1003);
+        deleteRequest(node1, alias, type, 1003);
+        createRequest(node1, alias, type, 1004);
+        deleteByQueryRequest(node1, alias, type, 1004);
+        bulkRequest(node1, alias, type, 1005);
+
+        assertNumOfDocs(node1, index1, type, 0);
+
+        // flush data file
+        runner.refresh();
+        assertEquals(1, dataDir.list().length);
+
+        runner.flush();
+        assertEquals(2, dataDir.list().length);
+    }
+
     private void assertSender(final Node node, final String index, final boolean found, final boolean running) throws IOException {
         try (CurlResponse curlResponse =
                 Curl.get(node, "/" + index + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {

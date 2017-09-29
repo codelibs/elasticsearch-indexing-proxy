@@ -137,6 +137,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     private final AtomicBoolean isMasterNode = new AtomicBoolean(false);
 
+    private final Set<String> renewActions;
+
     @Inject
     public IndexingProxyService(final Settings settings, final Environment env, final Client client, final ClusterService clusterService,
             final TransportService transportService, final NamedWriteableRegistry namedWriteableRegistry, final ThreadPool threadPool,
@@ -171,6 +173,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         writerRetryCount = IndexingProxyPlugin.SETTING_INXPROXY_WRITER_RETRY_COUNT.get(settings);
         numberOfReplicas = IndexingProxyPlugin.SETTING_INXPROXY_NUMBER_OF_REPLICAS.get(settings);
         numberOfShards = IndexingProxyPlugin.SETTING_INXPROXY_NUMBER_OF_SHARDS.get(settings);
+        renewActions = IndexingProxyPlugin.SETTING_INXPROXY_RENEW_ACTIONS.get(settings).stream().collect(Collectors.toSet());
 
         for (final ActionFilter filter : filters.filters()) {
             if (filter instanceof ProxyActionFilter) {
@@ -993,5 +996,9 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     public boolean isRunning(final String index) {
         final RequestSender docSender = docSenderMap.get(index);
         return docSender != null && docSender.isRunning();
+    }
+
+    public boolean isRenewAction(String action) {
+        return renewActions.contains(action);
     }
  }
