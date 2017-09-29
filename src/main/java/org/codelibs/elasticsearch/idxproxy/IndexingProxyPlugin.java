@@ -67,7 +67,7 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
             Setting.intSetting("idxproxy.sender.lookup_files", 1000, Property.NodeScope);
 
     public static final Setting<TimeValue> SETTING_INXPROXY_MONITOR_INTERVAL =
-            Setting.timeSetting("idxproxy.monitor.interval", TimeValue.timeValueMinutes(1), Property.NodeScope);
+            Setting.timeSetting("idxproxy.monitor.interval", TimeValue.timeValueSeconds(15), Property.NodeScope);
 
     public static final Setting<Integer> SETTING_INXPROXY_WRITER_RETRY_COUNT =
             Setting.intSetting("idxproxy.writer.retry_count", 10, Property.NodeScope);
