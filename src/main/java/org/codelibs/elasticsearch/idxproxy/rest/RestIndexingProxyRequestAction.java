@@ -41,10 +41,8 @@ public class RestIndexingProxyRequestAction extends BaseRestHandler {
 
     private RestChannelConsumer prepareGetRequest(final RestRequest request) {
         final int position = request.paramAsInt("position", -1);
-        return channel -> {
-            indexingProxyService.dumpRequests(position,
-                    wrap(res -> channel.sendResponse(new BytesRestResponse(RestStatus.OK, res)), e -> sendErrorResponse(channel, e)));
-        };
+        return channel -> indexingProxyService.dumpRequests(position,
+                wrap(res -> channel.sendResponse(new BytesRestResponse(RestStatus.OK, res)), e -> sendErrorResponse(channel, e)));
     }
 
     protected void sendErrorResponse(final RestChannel channel, final Exception e) {

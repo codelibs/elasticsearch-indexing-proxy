@@ -137,7 +137,7 @@ public final class RequestUtils {
         final BulkRequest request = builder.request();
         request.readFrom(streamInput);
         if (index != null) {
-            builder.request().requests().stream().forEach(req -> {
+            request.requests().stream().forEach(req -> {
                 if (req instanceof DeleteRequest) {
                     ((DeleteRequest) req).index(index);
                 } else if (req instanceof DeleteByQueryRequest) {
