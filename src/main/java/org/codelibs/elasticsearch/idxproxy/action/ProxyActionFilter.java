@@ -1,6 +1,8 @@
 package org.codelibs.elasticsearch.idxproxy.action;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.function.Supplier;
 
 import org.codelibs.elasticsearch.idxproxy.service.IndexingProxyService;
@@ -78,7 +80,35 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
                 throw new ElasticsearchException("Mixed target requests. ({} != {})", count, req.requests().size());
             }
             return () -> {
-                return (Response) new BulkResponse(new BulkItemResponse[0], (System.nanoTime() - startTime) / 1000000);
+                final List<BulkItemResponse> responseList = new ArrayList<>(req.requests().size());
+                for (int i = 0; i < req.requests().size(); i++) {
+                    final DocWriteRequest<?> dwr = req.requests().get(i);
+                    if (dwr instanceof IndexRequest) {
+                        final IndexRequest r = (IndexRequest) dwr;
+                        final String id = r.id() == null ? INDEX_UUID : r.id();
+                        final IndexResponse response =
+                                new IndexResponse(new ShardId(new Index(r.index(), INDEX_UUID), 0), r.type(), id, r.version(), true);
+                        responseList.add(new BulkItemResponse(i, r.opType(), response));
+                    } else if (dwr instanceof UpdateRequest) {
+                        final UpdateRequest r = (UpdateRequest) dwr;
+                        final String id = r.id() == null ? INDEX_UUID : r.id();
+                        final UpdateResponse response = new UpdateResponse(new ShardId(new Index(r.index(), INDEX_UUID), 0), r.type(), id,
+                                r.version(), Result.CREATED);
+                        responseList.add(new BulkItemResponse(i, r.opType(), response));
+                    } else if (dwr instanceof DeleteRequest) {
+                        final UpdateRequest r = (UpdateRequest) dwr;
+                        final String id = r.id() == null ? INDEX_UUID : r.id();
+                        final DeleteResponse response =
+                                new DeleteResponse(new ShardId(new Index(r.index(), INDEX_UUID), 0), r.type(), id, r.version(), true);
+                        response.setShardInfo(new ReplicationResponse.ShardInfo(1, 1, ReplicationResponse.EMPTY));
+                        responseList.add(new BulkItemResponse(i, r.opType(), response));
+                    } else {
+                        responseList.add(new BulkItemResponse(i, dwr.opType(), new BulkItemResponse.Failure(dwr.index(), dwr.type(),
+                                dwr.id(), new ElasticsearchException("Unknown request: " + dwr))));
+                    }
+                }
+                return (Response) new BulkResponse(responseList.toArray(new BulkItemResponse[responseList.size()]),
+                        (System.nanoTime() - startTime) / 1000000);
             };
         } else if (DeleteAction.NAME.equals(action)) {
             final DeleteRequest req = (DeleteRequest) request;
