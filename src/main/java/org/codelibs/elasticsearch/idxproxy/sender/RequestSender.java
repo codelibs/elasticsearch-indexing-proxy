@@ -134,7 +134,7 @@ public class RequestSender implements Runnable {
         if (logger.isDebugEnabled()) {
             logger.debug("Running RequestSender(" + index + ")");
         }
-        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).execute(wrap(res -> {
+        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(true).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String workingNodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);

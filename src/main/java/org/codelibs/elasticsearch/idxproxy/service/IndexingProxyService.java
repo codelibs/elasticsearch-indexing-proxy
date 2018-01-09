@@ -427,7 +427,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     private <Response extends ActionResponse> void createStreamOutput(final ActionListener<Response> listener) {
-        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).execute(wrap(res -> {
+        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setRefresh(true).execute(wrap(res -> {
             if (!res.isExists()) {
                 createStreamOutput(listener, 0);
             } else {
@@ -510,7 +510,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     public <Response extends ActionResponse> void renew(final ActionListener<Response> listener) {
-        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).execute(wrap(res -> {
+        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setRefresh(true).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String nodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
@@ -612,7 +612,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             logger.debug("Writing request " + request);
         }
 
-        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).execute(wrap(res -> {
+        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setRefresh(true).execute(wrap(res -> {
             if (!res.isExists()) {
                 createStreamOutput(wrap(response -> {
                     write(request, listener, tryCount + 1);
@@ -776,7 +776,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         if (logger.isDebugEnabled()) {
             logger.debug("Starting RequestSender(" + index + ")");
         }
-        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).execute(wrap(res -> {
+        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(true).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String workingNodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
@@ -830,7 +830,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         if (logger.isDebugEnabled()) {
             logger.debug("Stopping RequestSender(" + index + ")");
         }
-        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).execute(wrap(res -> {
+        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(true).execute(wrap(res -> {
             final Map<String, Object> params = new HashMap<>();
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
@@ -900,7 +900,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     public void getRequestSenderInfo(final String index, final ActionListener<Map<String, Object>> listener) {
-        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).execute(wrap(res -> {
+        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(true).execute(wrap(res -> {
             final Map<String, Object> params = new HashMap<>();
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
