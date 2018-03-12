@@ -497,7 +497,8 @@ public class IndexingProxyPluginTest extends TestCase {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
-            assertEquals(3, ((Integer) map.get("file_position")).intValue());
+            Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
+            assertEquals(3, ((Integer) senderMap.get("file_position")).intValue());
         }
     }
 
@@ -555,11 +556,12 @@ public class IndexingProxyPluginTest extends TestCase {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
-            assertEquals(2, ((Integer) map.get("file_position")).intValue());
-            assertTrue(((Boolean) map.get("running")).booleanValue());
+            Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
+            assertEquals(2, ((Integer) senderMap.get("file_position")).intValue());
+            assertTrue(((Boolean) senderMap.get("running")).booleanValue());
             assertTrue(((Boolean) map.get("found")).booleanValue());
-            assertEquals("Node 3", map.get("node_name"));
-            assertEquals("index", map.get("doc_type"));
+            assertEquals("Node 3", senderMap.get("node_name"));
+            assertEquals("index", senderMap.get("doc_type"));
         }
 
         // stop sender
@@ -581,13 +583,14 @@ public class IndexingProxyPluginTest extends TestCase {
                 final Map<String, Object> map = curlResponse.getContentAsMap();
                 assertNotNull(map);
                 assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
-                assertEquals(2, ((Integer) map.get("file_position")).intValue());
-                running = ((Boolean) map.get("running")).booleanValue();
+                Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
+                assertEquals(2, ((Integer) senderMap.get("file_position")).intValue());
+                running = ((Boolean) senderMap.get("running")).booleanValue();
                 if (!running) {
                     assertFalse(running);
                     assertTrue(((Boolean) map.get("found")).booleanValue());
-                    assertEquals("", map.get("node_name"));
-                    assertEquals("index", map.get("doc_type"));
+                    assertEquals("", senderMap.get("node_name"));
+                    assertEquals("index", senderMap.get("doc_type"));
                     break;
                 }
             }
@@ -626,11 +629,12 @@ public class IndexingProxyPluginTest extends TestCase {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
-            assertEquals(3, ((Integer) map.get("file_position")).intValue());
-            assertTrue(((Boolean) map.get("running")).booleanValue());
+            Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
+            assertEquals(3, ((Integer) senderMap.get("file_position")).intValue());
+            assertTrue(((Boolean) senderMap.get("running")).booleanValue());
             assertTrue(((Boolean) map.get("found")).booleanValue());
-            assertEquals("Node 3", map.get("node_name"));
-            assertEquals("index", map.get("doc_type"));
+            assertEquals("Node 3", senderMap.get("node_name"));
+            assertEquals("index", senderMap.get("doc_type"));
         }
 
         node3.close();
@@ -644,13 +648,14 @@ public class IndexingProxyPluginTest extends TestCase {
                 final Map<String, Object> map = curlResponse.getContentAsMap();
                 assertNotNull(map);
                 assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
-                assertEquals(3, ((Integer) map.get("file_position")).intValue());
-                running = ((Boolean) map.get("running")).booleanValue();
-                if (!running && Strings.isBlank(map.get("node_name").toString())) {
+                Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
+                assertEquals(3, ((Integer) senderMap.get("file_position")).intValue());
+                running = ((Boolean) senderMap.get("running")).booleanValue();
+                if (!running && Strings.isBlank(senderMap.get("node_name").toString())) {
                     assertFalse(running);
                     assertTrue(((Boolean) map.get("found")).booleanValue());
-                    assertEquals("", map.get("node_name"));
-                    assertEquals("index", map.get("doc_type"));
+                    assertEquals("", senderMap.get("node_name"));
+                    assertEquals("index", senderMap.get("doc_type"));
                     break;
                 }
             }
@@ -695,11 +700,12 @@ public class IndexingProxyPluginTest extends TestCase {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
-            assertEquals(4, ((Integer) map.get("file_position")).intValue());
-            assertTrue(((Boolean) map.get("running")).booleanValue());
+            Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
+            assertEquals(4, ((Integer) senderMap.get("file_position")).intValue());
+            assertTrue(((Boolean) senderMap.get("running")).booleanValue());
             assertTrue(((Boolean) map.get("found")).booleanValue());
-            assertEquals("Node 3", map.get("node_name"));
-            assertEquals("index", map.get("doc_type"));
+            assertEquals("Node 3", senderMap.get("node_name"));
+            assertEquals("index", senderMap.get("doc_type"));
         }
     }
 
@@ -750,7 +756,8 @@ public class IndexingProxyPluginTest extends TestCase {
             assertNotNull(map);
             assertEquals(found, ((Boolean) map.get("found")).booleanValue());
             if (found) {
-                assertEquals(running, ((Boolean) map.get("running")).booleanValue());
+                Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
+                assertEquals(running, ((Boolean) senderMap.get("running")).booleanValue());
             }
         }
     }

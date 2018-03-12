@@ -109,6 +109,8 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
 
     public static final String FILE_POSITION = "file_position";
 
+    public static final String FILE_TIMESTAMP = "file_timestamp";
+
     public static final String TIMESTAMP = "@timestamp";
 
     public static final String ACTION_IDXPROXY_WRITE = "internal:indices/idxproxy/write";

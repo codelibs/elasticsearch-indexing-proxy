@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.ArrayList;
@@ -483,6 +484,22 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }, listener::onFailure));
     }
 
+    private String getLastModifiedTime(final long version, final String ext) {
+        final String id = String.format(dataFileFormat, version);
+        final Path outputPath = dataPath.resolve(id + ext);
+        return AccessController.doPrivileged((PrivilegedAction<String>) () -> {
+            if (Files.exists(outputPath)) {
+                try {
+                    final FileTime time = Files.getLastModifiedTime(outputPath);
+                    return time.toString();
+                } catch (IOException e) {
+                    return "";
+                }
+            }
+            return null;
+        });
+    }
+
     private void closeStreamOutput() {
         if (logger.isDebugEnabled()) {
             logger.debug("[" + fileId + "] Closing streamOutput.");
@@ -893,8 +910,21 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         if (docSender != null) {
                             source.put("heartbeat", docSender.getHeartbeat());
                         }
+                        final Number pos = (Number) source.get(IndexingProxyPlugin.FILE_POSITION);
+                        if (pos != null) {
+                            final String t = getLastModifiedTime(pos.longValue() - 1, IndexingProxyPlugin.DATA_EXTENTION);
+                            if (t != null) {
+                                source.put(IndexingProxyPlugin.FILE_TIMESTAMP, t);
+                            }
+                        }
                         return source;
                     }).toArray(n -> new Map[n]));
+                    if (fileId != null) {
+                        final String t = getLastModifiedTime(Long.parseLong(fileId), WORKING_EXTENTION);
+                        if (t != null) {
+                            params.put("writer", Collections.singletonMap(IndexingProxyPlugin.FILE_TIMESTAMP, t));
+                        }
+                    }
                     listener.onResponse(params);
                 }, listener::onFailure));
     }
@@ -903,16 +933,31 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(true).execute(wrap(res -> {
             final Map<String, Object> params = new HashMap<>();
             if (res.isExists()) {
-                final Map<String, Object> source = res.getSourceAsMap();
-                params.putAll(source);
                 params.put("found", true);
+                final Map<String, Object> sender = new HashMap<>();
+                params.put("sender", sender);
+                final Map<String, Object> source = res.getSourceAsMap();
+                sender.putAll(source);
                 final RequestSender docSender = docSenderMap.get(res.getId());
-                params.put("running", docSender != null && docSender.isRunning());
+                sender.put("running", docSender != null && docSender.isRunning());
                 if (docSender != null) {
                     source.put("heartbeat", docSender.getHeartbeat());
                 }
+                final Number pos = (Number) sender.get(IndexingProxyPlugin.FILE_POSITION);
+                if (pos != null) {
+                    final String t = getLastModifiedTime(pos.longValue() - 1, IndexingProxyPlugin.DATA_EXTENTION);
+                    if (t != null) {
+                        sender.put(IndexingProxyPlugin.FILE_TIMESTAMP, t);
+                    }
+                }
             } else {
                 params.put("found", false);
+            }
+            if (fileId != null) {
+                final String t = getLastModifiedTime(Long.parseLong(fileId), WORKING_EXTENTION);
+                if (t != null) {
+                    params.put("writer", Collections.singletonMap(IndexingProxyPlugin.FILE_TIMESTAMP, t));
+                }
             }
             listener.onResponse(params);
         }, listener::onFailure));
