@@ -261,7 +261,7 @@ public class RequestSender implements Runnable {
                 }
             } else {
                 IOUtils.closeQuietly(streamInput);
-                logger.info("[Sender][{}] Indexed:  {}", index, path.toAbsolutePath());
+                logger.info("[Sender][{}] Indexed:  {} {}", index, path.toAbsolutePath(), requestPosition - 1);
 
                 processNext(getNextValue(filePosition));
             }
