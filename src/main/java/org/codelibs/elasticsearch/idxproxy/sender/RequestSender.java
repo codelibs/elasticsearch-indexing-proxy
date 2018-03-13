@@ -261,7 +261,17 @@ public class RequestSender implements Runnable {
                 }
             } else {
                 IOUtils.closeQuietly(streamInput);
-                logger.info("[Sender][{}] Indexed:  {} {}", index, path.toAbsolutePath(), requestPosition - 1);
+                long fileSize = 0;
+                if (FileAccessUtils.existsFile(path)) {
+                    fileSize = AccessController.doPrivileged((PrivilegedAction<Long>) () -> {
+                        try {
+                            return Files.size(path);
+                        } catch (final IOException e) {
+                            throw new ElasticsearchException("Failed to read " + path.toAbsolutePath(), e);
+                        }
+                    });
+                }
+                logger.info("[Sender][{}] Indexed:  {} {} {}", index, path.toAbsolutePath(), requestPosition - 1, fileSize);
 
                 processNext(getNextValue(filePosition));
             }

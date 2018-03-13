@@ -771,6 +771,7 @@ public class IndexingProxyPluginTest extends TestCase {
                 @SuppressWarnings("unchecked")
                 final Map<String, Object> hits = (Map<String, Object>) map.get("hits");
                 actual = ((Number) hits.get("total")).longValue();
+                System.out.println("response: " + map);
                 if (actual == num) {
                     Thread.sleep(3000L); // wait for bulk requests
                     return;
