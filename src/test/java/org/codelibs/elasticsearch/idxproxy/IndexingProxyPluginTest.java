@@ -405,6 +405,7 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals(500, curlResponse.getHttpStatusCode());
         }
 
+        System.out.println("Waiting...");
         Thread.sleep(5000L);
 
         assertNumOfDocs(node1, index1, type, 0);
@@ -429,6 +430,7 @@ public class IndexingProxyPluginTest extends TestCase {
 
         node2.close();
 
+        System.out.println("Waiting...");
         Thread.sleep(5000L);
 
         assertSender(node1, index1, true, false);
@@ -749,8 +751,9 @@ public class IndexingProxyPluginTest extends TestCase {
         assertEquals(2, dataDir.list().length);
     }
 
-    private void assertSender(final Node node, final String index, final boolean found, final boolean running) throws IOException {
+    private void assertSender(final Node node, final String index, final boolean found, final boolean running) throws Exception {
         runner.refresh(builder->builder.setIndices(index));
+        Thread.sleep(1000L);
         try (CurlResponse curlResponse =
                 Curl.get(node, "/" + index + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -764,7 +767,6 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void waitForNdocs(final Node node, final String index, final String type, final long num) throws Exception {
-        runner.refresh(builder->builder.setIndices(index));
         long actual = 0;
         for (int i = 0; i < 30; i++) {
             try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/_search")
@@ -776,10 +778,11 @@ public class IndexingProxyPluginTest extends TestCase {
                 System.out.println("response: " + map);
                 if (actual == num) {
                     Thread.sleep(3000L); // wait for bulk requests
+                    runner.refresh(builder->builder.setIndices(index));
                     return;
                 }
             }
-            runner.refresh();
+            runner.refresh(builder->builder.setIndices(index));
             Thread.sleep(1000L);
         }
         System.out.println(num + " docs are not inserted. " + actual + " docs exist.");
