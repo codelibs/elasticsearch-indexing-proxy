@@ -920,9 +920,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         return source;
                     }).toArray(n -> new Map[n]));
                     if (fileId != null) {
-                        final String t = getLastModifiedTime(Long.parseLong(fileId), WORKING_EXTENTION);
+                        final long pos = Long.parseLong(fileId);
+                        final Map<String, Object> writer = new HashMap<>();
+                        params.put("writer", writer);
+                        writer.put(IndexingProxyPlugin.FILE_POSITION, pos);
+                        final String t = getLastModifiedTime(pos, WORKING_EXTENTION);
                         if (t != null) {
-                            params.put("writer", Collections.singletonMap(IndexingProxyPlugin.FILE_TIMESTAMP, t));
+                            writer.put(IndexingProxyPlugin.FILE_TIMESTAMP, t);
                         }
                     }
                     listener.onResponse(params);
@@ -954,9 +958,13 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 params.put("found", false);
             }
             if (fileId != null) {
-                final String t = getLastModifiedTime(Long.parseLong(fileId), WORKING_EXTENTION);
+                final long pos = Long.parseLong(fileId);
+                final Map<String, Object> writer = new HashMap<>();
+                params.put("writer", writer);
+                writer.put(IndexingProxyPlugin.FILE_POSITION, pos);
+                final String t = getLastModifiedTime(pos, WORKING_EXTENTION);
                 if (t != null) {
-                    params.put("writer", Collections.singletonMap(IndexingProxyPlugin.FILE_TIMESTAMP, t));
+                    writer.put(IndexingProxyPlugin.FILE_TIMESTAMP, t);
                 }
             }
             listener.onResponse(params);
