@@ -78,7 +78,7 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
@@ -178,7 +178,7 @@ public class IndexingProxyPluginTest extends TestCase {
         assertFilePosition(node1, index1, 3);
 
         final String index2 = "sample2";
-        runner.createIndex(index2, Settings.builder().build());
+        runner.createIndex(index2, Settings.builder().put("index.refresh_interval","5m").build());
         runner.ensureYellow(index2);
 
         try (CurlResponse curlResponse =
@@ -300,7 +300,7 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
@@ -379,7 +379,7 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
@@ -467,7 +467,7 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
@@ -518,7 +518,7 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
@@ -722,7 +722,7 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
@@ -780,6 +780,7 @@ public class IndexingProxyPluginTest extends TestCase {
             runner.refresh();
             Thread.sleep(1000L);
         }
+        System.out.println(num + " docs are not inserted. " + actual + " docs exist.");
         fail(num + " docs are not inserted. " + actual + " docs exist.");
     }
 
