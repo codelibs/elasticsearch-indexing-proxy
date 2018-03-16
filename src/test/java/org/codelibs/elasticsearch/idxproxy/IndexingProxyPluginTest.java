@@ -778,7 +778,7 @@ public class IndexingProxyPluginTest extends TestCase {
                 System.out.println("response: " + map);
                 if (actual == num) {
                     Thread.sleep(3000L); // wait for bulk requests
-                    runner.refresh(builder->builder.setIndices(index));
+                    waitForNdocs(node, index, type, num);
                     return;
                 }
             }
