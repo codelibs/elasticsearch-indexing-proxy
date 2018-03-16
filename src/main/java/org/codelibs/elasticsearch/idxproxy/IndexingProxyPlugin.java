@@ -82,6 +82,9 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
     public static final Setting<List<String>> SETTING_INXPROXY_WRITE_NODES =
             Setting.listSetting("idxproxy.writer_nodes", Collections.emptyList(), s -> s.trim(), Property.NodeScope);
 
+    public static final Setting<Integer> SETTING_INXPROXY_REQUEST_RETRY_COUNT =
+            Setting.intSetting("idxproxy.request.retry_count", 5, Property.NodeScope);
+
     public static final Setting<Boolean> SETTING_INXPROXY_FLUSH_PER_DOC =
             Setting.boolSetting("idxproxy.flush_per_doc", true, Property.NodeScope);
 
@@ -157,6 +160,7 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
                 SETTING_INXPROXY_WRITER_RETRY_COUNT, //
                 SETTING_INXPROXY_SENDER_NODES, //
                 SETTING_INXPROXY_WRITE_NODES, //
+                SETTING_INXPROXY_REQUEST_RETRY_COUNT, //
                 SETTING_INXPROXY_FLUSH_PER_DOC, //
                 SETTING_INXPROXY_NUMBER_OF_REPLICAS, //
                 SETTING_INXPROXY_NUMBER_OF_SHARDS, //
