@@ -430,11 +430,8 @@ public class IndexingProxyPluginTest extends TestCase {
 
         node2.close();
 
-        System.out.println("Waiting...");
+        System.out.println("Waiting for closing node2...");
         Thread.sleep(5000L);
-
-        assertSender(node1, index1, true, false);
-        assertSender(node3, index1, true, true);
 
         // send requests to data file
         // indexRequest(node1, alias, type, 2000);
@@ -451,6 +448,9 @@ public class IndexingProxyPluginTest extends TestCase {
         assertNumOfDocs(node1, index1, type, 5);
 
         runner.refresh();
+
+        assertSender(node1, index1, true, false);
+        assertSender(node3, index1, true, true);
 
         waitForNdocs(node1, index1, type, 9);
 
