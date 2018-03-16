@@ -750,6 +750,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void assertSender(final Node node, final String index, final boolean found, final boolean running) throws IOException {
+        runner.refresh(builder->builder.setIndices(index));
         try (CurlResponse curlResponse =
                 Curl.get(node, "/" + index + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -762,10 +763,11 @@ public class IndexingProxyPluginTest extends TestCase {
         }
     }
 
-    private void waitForNdocs(final Node node, final String index1, final String type, final long num) throws Exception {
+    private void waitForNdocs(final Node node, final String index, final String type, final long num) throws Exception {
+        runner.refresh(builder->builder.setIndices(index));
         long actual = 0;
         for (int i = 0; i < 30; i++) {
-            try (CurlResponse curlResponse = Curl.post(node, "/" + index1 + "/" + type + "/_search")
+            try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/_search")
                     .header("Content-Type", "application/json").body("{\"query\":{\"match_all\":{}}}").execute()) {
                 final Map<String, Object> map = curlResponse.getContentAsMap();
                 @SuppressWarnings("unchecked")
@@ -784,8 +786,9 @@ public class IndexingProxyPluginTest extends TestCase {
         fail(num + " docs are not inserted. " + actual + " docs exist.");
     }
 
-    private void assertNumOfDocs(final Node node1, final String index1, final String type, final long total) throws IOException {
-        try (CurlResponse curlResponse = Curl.post(node1, "/" + index1 + "/" + type + "/_search").header("Content-Type", "application/json")
+    private void assertNumOfDocs(final Node node1, final String index, final String type, final long total) throws IOException {
+        runner.refresh(builder->builder.setIndices(index));
+        try (CurlResponse curlResponse = Curl.post(node1, "/" + index + "/" + type + "/_search").header("Content-Type", "application/json")
                 .body("{\"query\":{\"match_all\":{}}}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
