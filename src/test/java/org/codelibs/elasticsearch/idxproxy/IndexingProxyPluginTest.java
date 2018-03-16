@@ -779,7 +779,7 @@ public class IndexingProxyPluginTest extends TestCase {
                 System.out.println("response: " + map);
                 if (actual == num) {
                     Thread.sleep(3000L); // wait for bulk requests
-                    waitForNdocs(node, index, type, num);
+                    // waitForNdocs(node, index, type, num);
                     return;
                 }
             }
@@ -882,7 +882,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void indexRequest(final Node node, final String index, final String type, final long id) throws IOException {
-        try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type).header("Content-Type", "application/json")
+        try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type+"/"+id).header("Content-Type", "application/json")
                 .param("refresh", "true").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
