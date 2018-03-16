@@ -445,6 +445,7 @@ public class IndexingProxyPluginTest extends TestCase {
         deleteByQueryRequest(node1, alias, type, 2004);
         bulkRequest(node1, alias, type, 2005);
 
+        waitForNdocs(node1, index1, type, 5);
         assertNumOfDocs(node1, index1, type, 5);
 
         runner.refresh();
