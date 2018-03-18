@@ -78,22 +78,22 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval", "5m").put("index.number_of_shards", "1").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
 
         // send requests to data file
-        indexRequest(node1, alias, type, 1000);
-        createRequest(node1, alias, type, 1001);
-        updateRequest(node1, alias, type, 1001);
-        createRequest(node1, alias, type, 1002);
-        updateByQueryRequest(node1, alias, type, 1002);
+        bulkRequest(node1, alias, type, 1005);
         createRequest(node1, alias, type, 1003);
         deleteRequest(node1, alias, type, 1003);
         createRequest(node1, alias, type, 1004);
         deleteByQueryRequest(node1, alias, type, 1004);
-        bulkRequest(node1, alias, type, 1005);
+        createRequest(node1, alias, type, 1001);
+        updateRequest(node1, alias, type, 1001);
+        createRequest(node1, alias, type, 1002);
+        updateByQueryRequest(node1, alias, type, 1002);
+        indexRequest(node1, alias, type, 1000);
 
         assertNumOfDocs(node1, index1, type, 0);
 
@@ -126,8 +126,8 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals("test 1306", ((Map<String, Object>) list.get(4).get("_source")).get("msg"));
         }
 
-        try (CurlResponse curlResponse = Curl.get(node1, "/_idxproxy/request").header("Content-Type", "application/json")
-                .param("position", "1").execute()) {
+        try (CurlResponse curlResponse =
+                Curl.get(node1, "/_idxproxy/request").header("Content-Type", "application/json").param("position", "1").execute()) {
             final String content = curlResponse.getContentAsString();
             assertNotNull(content);
             System.out.println(content);
@@ -136,16 +136,16 @@ public class IndexingProxyPluginTest extends TestCase {
         assertFilePosition(node1, index1, 2);
 
         // send requests to data file
-        indexRequest(node1, alias, type, 2000);
-        createRequest(node1, alias, type, 2001);
-        updateRequest(node1, alias, type, 2001);
-        createRequest(node1, alias, type, 2002);
-        updateByQueryRequest(node1, alias, type, 2002);
+        bulkRequest(node1, alias, type, 2005);
         createRequest(node1, alias, type, 2003);
         deleteRequest(node1, alias, type, 2003);
         createRequest(node1, alias, type, 2004);
         deleteByQueryRequest(node1, alias, type, 2004);
-        bulkRequest(node1, alias, type, 2005);
+        createRequest(node1, alias, type, 2001);
+        updateRequest(node1, alias, type, 2001);
+        createRequest(node1, alias, type, 2002);
+        updateByQueryRequest(node1, alias, type, 2002);
+        indexRequest(node1, alias, type, 2000);
 
         assertNumOfDocs(node1, index1, type, 5);
 
@@ -178,7 +178,7 @@ public class IndexingProxyPluginTest extends TestCase {
         assertFilePosition(node1, index1, 3);
 
         final String index2 = "sample2";
-        runner.createIndex(index2, Settings.builder().put("index.refresh_interval","5m").build());
+        runner.createIndex(index2, Settings.builder().put("index.refresh_interval", "5m").put("index.number_of_shards", "1").build());
         runner.ensureYellow(index2);
 
         try (CurlResponse curlResponse =
@@ -220,16 +220,16 @@ public class IndexingProxyPluginTest extends TestCase {
         assertFilePosition(node1, index1, 3);
 
         // send requests to data file
-        indexRequest(node1, alias, type, 3000);
-        createRequest(node1, alias, type, 3001);
-        updateRequest(node1, alias, type, 3001);
-        createRequest(node1, alias, type, 3002);
-        updateByQueryRequest(node1, alias, type, 3002);
+        bulkRequest(node1, alias, type, 3005);
         createRequest(node1, alias, type, 3003);
         deleteRequest(node1, alias, type, 3003);
         createRequest(node1, alias, type, 3004);
         deleteByQueryRequest(node1, alias, type, 3004);
-        bulkRequest(node1, alias, type, 3005);
+        createRequest(node1, alias, type, 3001);
+        updateRequest(node1, alias, type, 3001);
+        createRequest(node1, alias, type, 3002);
+        updateByQueryRequest(node1, alias, type, 3002);
+        indexRequest(node1, alias, type, 3000);
 
         assertNumOfDocs(node1, index1, type, 10);
 
@@ -300,22 +300,22 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval", "5m").put("index.number_of_shards", "1").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
 
         // send requests to data file
-        indexRequest(node1, alias, type, 1000);
-        createRequest(node1, alias, type, 1001);
-        updateRequest(node1, alias, type, 1001);
-        createRequest(node1, alias, type, 1002);
-        updateByQueryRequest(node1, alias, type, 1002);
+        bulkRequest(node1, alias, type, 1005);
         createRequest(node1, alias, type, 1003);
         deleteRequest(node1, alias, type, 1003);
         createRequest(node1, alias, type, 1004);
         deleteByQueryRequest(node1, alias, type, 1004);
-        bulkRequest(node1, alias, type, 1005);
+        createRequest(node1, alias, type, 1001);
+        updateRequest(node1, alias, type, 1001);
+        createRequest(node1, alias, type, 1002);
+        updateByQueryRequest(node1, alias, type, 1002);
+        indexRequest(node1, alias, type, 1000);
 
         assertNumOfDocs(node1, index1, type, 0);
 
@@ -379,24 +379,24 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval", "5m").put("index.number_of_shards", "1").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
 
         // send requests to data file
+        bulkRequest(node2, alias, type, 1005);
+        createRequest(node2, alias, type, 1003);
+        deleteRequest(node2, alias, type, 1003);
+        createRequest(node2, alias, type, 1004);
+        deleteByQueryRequest(node2, alias, type, 1004);
+        createRequest(node2, alias, type, 1001);
+        updateRequest(node2, alias, type, 1001);
+        createRequest(node2, alias, type, 1002);
+        updateByQueryRequest(node2, alias, type, 1002);
         indexRequest(node2, alias, type, 1000);
-        createRequest(node1, alias, type, 1001);
-        updateRequest(node1, alias, type, 1001);
-        createRequest(node1, alias, type, 1002);
-        updateByQueryRequest(node1, alias, type, 1002);
-        createRequest(node1, alias, type, 1003);
-        deleteRequest(node1, alias, type, 1003);
-        createRequest(node1, alias, type, 1004);
-        deleteByQueryRequest(node1, alias, type, 1004);
-        bulkRequest(node1, alias, type, 1005);
 
-        assertNumOfDocs(node1, index1, type, 0);
+        assertNumOfDocs(node2, index1, type, 0);
 
         runner.refresh();
 
@@ -405,8 +405,8 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals(500, curlResponse.getHttpStatusCode());
         }
 
-        System.out.println("Waiting...");
-        Thread.sleep(5000L);
+        System.out.println("Waiting for writer...");
+        Thread.sleep(1000L);
 
         assertNumOfDocs(node1, index1, type, 0);
 
@@ -431,19 +431,21 @@ public class IndexingProxyPluginTest extends TestCase {
         node2.close();
 
         System.out.println("Waiting for closing node2...");
-        Thread.sleep(5000L);
+        Thread.sleep(1000L);
+        runner.ensureYellow();
+        runner.refresh();
 
         // send requests to data file
-        // indexRequest(node1, alias, type, 2000);
-        createRequest(node1, alias, type, 2001);
-        updateRequest(node1, alias, type, 2001);
-        createRequest(node1, alias, type, 2002);
-        updateByQueryRequest(node1, alias, type, 2002);
-        createRequest(node1, alias, type, 2003);
-        deleteRequest(node1, alias, type, 2003);
-        createRequest(node1, alias, type, 2004);
-        deleteByQueryRequest(node1, alias, type, 2004);
-        bulkRequest(node1, alias, type, 2005);
+        bulkRequest(node3, alias, type, 2005);
+        createRequest(node3, alias, type, 2003);
+        deleteRequest(node3, alias, type, 2003);
+        createRequest(node3, alias, type, 2004);
+        deleteByQueryRequest(node3, alias, type, 2004);
+        createRequest(node3, alias, type, 2001);
+        updateRequest(node3, alias, type, 2001);
+        createRequest(node3, alias, type, 2002);
+        updateByQueryRequest(node3, alias, type, 2002);
+        indexRequest(node3, alias, type, 2000);
 
         waitForNdocs(node1, index1, type, 5);
         assertNumOfDocs(node1, index1, type, 5);
@@ -470,7 +472,7 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval", "5m").put("index.number_of_shards", "1").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
@@ -521,7 +523,7 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval", "5m").put("index.number_of_shards", "1").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
@@ -624,7 +626,7 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals("index", map.get("doc_type"));
         }
 
-        waitForNdocs(node1, index1, type, 2);
+        waitForNdocs(node1, index1, type, 1);
 
         // check status
         try (CurlResponse curlResponse =
@@ -633,7 +635,7 @@ public class IndexingProxyPluginTest extends TestCase {
             assertNotNull(map);
             assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
             Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
-            assertEquals(3, ((Integer) senderMap.get("file_position")).intValue());
+            assertEquals(2, ((Integer) senderMap.get("file_position")).intValue());
             assertTrue(((Boolean) senderMap.get("running")).booleanValue());
             assertTrue(((Boolean) map.get("found")).booleanValue());
             assertEquals("Node 3", senderMap.get("node_name"));
@@ -652,7 +654,7 @@ public class IndexingProxyPluginTest extends TestCase {
                 assertNotNull(map);
                 assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
                 Map<String, Object> senderMap = (Map<String, Object>) map.get("sender");
-                assertEquals(3, ((Integer) senderMap.get("file_position")).intValue());
+                assertEquals(2, ((Integer) senderMap.get("file_position")).intValue());
                 running = ((Boolean) senderMap.get("running")).booleanValue();
                 if (!running && Strings.isBlank(senderMap.get("node_name").toString())) {
                     assertFalse(running);
@@ -669,14 +671,12 @@ public class IndexingProxyPluginTest extends TestCase {
         }
 
         // send requests to data file
-        indexRequest(node2, alias, type, 1000);
-
-        assertNumOfDocs(node1, index1, type, 2);
+        indexRequest(node2, alias, type, 1001);
 
         // flush data file
         runner.refresh();
 
-        assertNumOfDocs(node1, index1, type, 2);
+        assertNumOfDocs(node1, index1, type, 1);
 
         // start node3
         assertTrue(runner.startNode(2));
@@ -690,12 +690,12 @@ public class IndexingProxyPluginTest extends TestCase {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertTrue(((Boolean) map.get("acknowledged")).booleanValue());
-            assertEquals(3, ((Integer) map.get("file_position")).intValue());
+            assertEquals(2, ((Integer) map.get("file_position")).intValue());
             assertEquals("Node 3", map.get("node_name"));
             assertEquals("index", map.get("doc_type"));
         }
 
-        waitForNdocs(node1, index1, type, 3);
+        waitForNdocs(node1, index1, type, 2);
 
         // check status
         try (CurlResponse curlResponse =
@@ -725,22 +725,22 @@ public class IndexingProxyPluginTest extends TestCase {
         final String alias = "sample";
         final String index1 = "sample1";
         final String type = "data";
-        runner.createIndex(index1, Settings.builder().put("index.refresh_interval","5m").build());
+        runner.createIndex(index1, Settings.builder().put("index.refresh_interval", "5m").put("index.number_of_shards", "1").build());
         runner.updateAlias(alias, new String[] { index1 }, new String[0]);
 
         runner.ensureYellow(".idxproxy");
 
         // send requests to data file
-        indexRequest(node1, alias, type, 1000);
-        createRequest(node1, alias, type, 1001);
-        updateRequest(node1, alias, type, 1001);
-        createRequest(node1, alias, type, 1002);
-        updateByQueryRequest(node1, alias, type, 1002);
+        bulkRequest(node1, alias, type, 1005);
         createRequest(node1, alias, type, 1003);
         deleteRequest(node1, alias, type, 1003);
         createRequest(node1, alias, type, 1004);
         deleteByQueryRequest(node1, alias, type, 1004);
-        bulkRequest(node1, alias, type, 1005);
+        createRequest(node1, alias, type, 1001);
+        updateRequest(node1, alias, type, 1001);
+        createRequest(node1, alias, type, 1002);
+        updateByQueryRequest(node1, alias, type, 1002);
+        indexRequest(node1, alias, type, 1000);
 
         assertNumOfDocs(node1, index1, type, 0);
 
@@ -753,7 +753,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void assertSender(final Node node, final String index, final boolean found, final boolean running) throws Exception {
-        runner.refresh(builder->builder.setIndices(index));
+        runner.refresh(builder -> builder.setIndices(index));
         Thread.sleep(1000L);
         try (CurlResponse curlResponse =
                 Curl.get(node, "/" + index + "/_idxproxy/process").header("Content-Type", "application/json").execute()) {
@@ -778,12 +778,12 @@ public class IndexingProxyPluginTest extends TestCase {
                 actual = ((Number) hits.get("total")).longValue();
                 System.out.println("response: " + map);
                 if (actual == num) {
-                    Thread.sleep(3000L); // wait for bulk requests
+                    // Thread.sleep(5000L); // wait for bulk requests
                     // waitForNdocs(node, index, type, num);
                     return;
                 }
             }
-            runner.refresh(builder->builder.setIndices(index));
+            runner.refresh(builder -> builder.setIndices(index));
             Thread.sleep(1000L);
         }
         System.out.println(num + " docs are not inserted. " + actual + " docs exist.");
@@ -791,7 +791,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void assertNumOfDocs(final Node node1, final String index, final String type, final long total) throws IOException {
-        runner.refresh(builder->builder.setIndices(index));
+        runner.refresh(builder -> builder.setIndices(index));
         try (CurlResponse curlResponse = Curl.post(node1, "/" + index + "/" + type + "/_search").header("Content-Type", "application/json")
                 .body("{\"query\":{\"match_all\":{}}}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -826,8 +826,8 @@ public class IndexingProxyPluginTest extends TestCase {
         createRequest(node, index, type, value);
         buf.append("{\"delete\":{\"_index\":\"" + index + "\",\"_type\":\"" + type + "\",\"_id\":\"" + value + "\"}}\n");
 
-        try (CurlResponse curlResponse =
-                Curl.post(node, "/_bulk").header("Content-Type", "application/x-ndjson").body(buf.toString()).execute()) {
+        try (CurlResponse curlResponse = Curl.post(node, "/_bulk").header("Content-Type", "application/x-ndjson")
+                .param("refresh", "wait_for").body(buf.toString()).execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertTrue(map.containsKey("took"));
@@ -844,8 +844,8 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void deleteRequest(final Node node, final String index, final String type, final long id) throws IOException {
-        try (CurlResponse curlResponse =
-                Curl.delete(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json").execute()) {
+        try (CurlResponse curlResponse = Curl.delete(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json")
+                .param("refresh", "wait_for").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertEquals("true", map.get("found").toString());
@@ -874,7 +874,7 @@ public class IndexingProxyPluginTest extends TestCase {
 
     private void createRequest(final Node node, final String index, final String type, final long id) throws IOException {
         try (CurlResponse curlResponse = Curl.put(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json")
-                .param("refresh", "true").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
+                .param("refresh", "wait_for").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertEquals("true", map.get("created").toString());
@@ -882,8 +882,8 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void indexRequest(final Node node, final String index, final String type, final long id) throws IOException {
-        try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type+"/"+id).header("Content-Type", "application/json")
-                .param("refresh", "true").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
+        try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json")
+                .param("refresh", "wait_for").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
             assertNotNull(map);
             assertEquals("true", map.get("created").toString());
