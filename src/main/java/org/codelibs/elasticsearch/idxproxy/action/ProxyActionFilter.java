@@ -5,7 +5,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.function.Supplier;
 
-import org.codelibs.elasticsearch.idxproxy.IndexingProxyPlugin;
 import org.codelibs.elasticsearch.idxproxy.service.IndexingProxyService;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
@@ -49,12 +48,9 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
 
     private IndexingProxyService indexingProxyService;
 
-    private final int maxRetryCount;
-
     @Inject
     public ProxyActionFilter(final Settings settings) {
         super(settings);
-        maxRetryCount = IndexingProxyPlugin.SETTING_INXPROXY_REQUEST_RETRY_COUNT.get(settings);
     }
 
     @Override
@@ -192,7 +188,9 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
         }
         final Supplier<Response> executor = getExecutor(task, action, request);
         if (executor != null) {
-            processRequest(request, listener, executor, 0);
+            indexingProxyService.write(request, ActionListener.wrap(res -> {
+                listener.onResponse(executor.get());
+            }, listener::onFailure));
         } else if (indexingProxyService.isRenewAction(action)) {
             indexingProxyService.renew(ActionListener.wrap(res -> {
                 chain.proceed(task, action, request, listener);
@@ -200,19 +198,6 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
         } else {
             chain.proceed(task, action, request, listener);
         }
-    }
-
-    private <Request extends ActionRequest, Response extends ActionResponse> void processRequest(final Request request,
-            final ActionListener<Response> listener, final Supplier<Response> executor, final int count) {
-        indexingProxyService.write(request, ActionListener.wrap(res -> {
-            listener.onResponse(executor.get());
-        }, e -> {
-            if (count < maxRetryCount) {
-                processRequest(request, listener, executor, count + 1);
-            } else {
-                listener.onFailure(e);
-            }
-        }));
     }
 
     public void setIndexingProxyService(final IndexingProxyService indexingProxyService) {

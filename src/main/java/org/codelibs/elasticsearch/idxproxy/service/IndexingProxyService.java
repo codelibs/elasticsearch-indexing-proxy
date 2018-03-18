@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.util.Strings;
@@ -239,8 +240,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             clusterService.state().nodes().getNodes().valuesIt().forEachRemaining(node -> nodeMap.put(node.getName(), node));
 
             try {
-                client.prepareSearch(IndexingProxyPlugin.INDEX_NAME).setTypes(IndexingProxyPlugin.TYPE_NAME).setQuery(QueryBuilders.termQuery(DOC_TYPE, "index")).setSize(1000)
-                        .execute(wrap(response -> {
+                client.prepareSearch(IndexingProxyPlugin.INDEX_NAME).setTypes(IndexingProxyPlugin.TYPE_NAME)
+                        .setQuery(QueryBuilders.termQuery(DOC_TYPE, "index")).setSize(1000).execute(wrap(response -> {
                             checkSender(nodeMap, Arrays.asList(response.getHits().getHits()).iterator());
                         }, e -> {
                             if (e instanceof IndexNotFoundException) {
@@ -562,6 +563,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
         }
         if (pos == -1) {
+            // TODO retry
             listener.onFailure(new ElasticsearchException("Writer nodes are not found for renew."));
         }
 
@@ -656,6 +658,29 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }));
     }
 
+    private void updateWriterNode(final long version, final List<DiscoveryNode> nodeList,
+            final BiConsumer<UpdateResponse, Exception> consumer) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("No available write node.");
+        }
+        Collections.shuffle(nodeList);
+        final DiscoveryNode nextNode = nodeList.get(0);
+        final Map<String, Object> source = new HashMap<>();
+        source.put(IndexingProxyPlugin.NODE_NAME, nextNode.getName());
+        source.put(IndexingProxyPlugin.TIMESTAMP, new Date());
+        client.prepareUpdate(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setVersion(version).setDoc(source)
+                .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
+                    randomWait();
+                    consumer.accept(res, null);
+                }, ex -> {
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("Failed to update file_id.", ex);
+                    }
+                    randomWait();
+                    consumer.accept(null, ex);
+                }));
+    }
+
     private <Request extends ActionRequest, Response extends ActionResponse> void writeOnRemote(final String nodeName, final long version,
             final Request request, final ActionListener<Response> listener, final int tryCount) {
         final List<DiscoveryNode> nodeList = new ArrayList<>();
@@ -679,20 +704,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 if (logger.isDebugEnabled()) {
                     logger.debug("No available write node.");
                 }
-                Collections.shuffle(nodeList);
-                final DiscoveryNode nextNode = nodeList.get(0);
-                final Map<String, Object> source = new HashMap<>();
-                source.put(IndexingProxyPlugin.NODE_NAME, nextNode.getName());
-                source.put(IndexingProxyPlugin.TIMESTAMP, new Date());
-                client.prepareUpdate(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setVersion(version).setDoc(source)
-                        .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
-                            write(request, listener, tryCount + 1);
-                        }, ex -> {
-                            if (logger.isDebugEnabled()) {
-                                logger.debug("Failed to update file_id.", ex);
-                            }
-                            write(request, listener, tryCount + 1);
-                        }));
+                updateWriterNode(version, nodeList, (res, ex) -> write(request, listener, tryCount + 1));
             }
         }
 
@@ -734,8 +746,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                                 final Map<String, Object> source = new HashMap<>();
                                 source.put(IndexingProxyPlugin.NODE_NAME, nextNode.getName());
                                 source.put(IndexingProxyPlugin.TIMESTAMP, new Date());
-                                client.prepareUpdate(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setVersion(version).setDoc(source)
-                                        .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
+                                client.prepareUpdate(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID)
+                                        .setVersion(version).setDoc(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
                                             write(request, listener, tryCount + 1);
                                         }, ex -> {
                                             if (logger.isDebugEnabled()) {
@@ -778,7 +790,6 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             next.onResponse(null);
         }
     }
- 
 
     public boolean isTargetIndex(final String index) {
         return targetIndexSet.contains(index);
@@ -820,8 +831,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         source.put(IndexingProxyPlugin.FILE_POSITION, filePosition);
         source.put(IndexingProxyPlugin.TIMESTAMP, new Date());
         source.put(DOC_TYPE, "index");
-        final IndexRequestBuilder builder =
-                client.prepareIndex(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setSource(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL);
+        final IndexRequestBuilder builder = client.prepareIndex(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index)
+                .setSource(source).setRefreshPolicy(RefreshPolicy.WAIT_UNTIL);
         if (version > 0) {
             builder.setVersion(version);
         } else {
@@ -897,8 +908,8 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     public void getRequestSenderInfos(final int from, final int size, final ActionListener<Map<String, Object>> listener) {
-        client.prepareSearch(IndexingProxyPlugin.INDEX_NAME).setQuery(QueryBuilders.termQuery(DOC_TYPE, "index")).setFrom(from).setSize(size)
-                .execute(wrap(res -> {
+        client.prepareSearch(IndexingProxyPlugin.INDEX_NAME).setQuery(QueryBuilders.termQuery(DOC_TYPE, "index")).setFrom(from)
+                .setSize(size).execute(wrap(res -> {
                     final Map<String, Object> params = new HashMap<>();
                     params.put("took_in_millis", res.getTookInMillis());
                     params.put("senders", Arrays.stream(res.getHits().getHits()).map(hit -> {
@@ -1054,4 +1065,4 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     public boolean isRenewAction(String action) {
         return renewActions.contains(action);
     }
- }
+}
