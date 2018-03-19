@@ -26,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.util.Strings;
@@ -532,12 +533,25 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     }
 
     private <Response extends ActionResponse> void renew(final ActionListener<Response> listener, final int tryCount) {
+        final Consumer<Exception> retryConsumer = e -> {
+            if (tryCount >= writerRetryCount) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Failed to get file_id.", e);
+                }
+                listener.onFailure(e);
+            } else {
+                randomWait();
+                final int count = tryCount + 1;
+                logger.info("Retry a renew request(" + count + ")");
+                renew(listener, count);
+            }
+        };
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setRefresh(true).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String nodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
                 if (nodeName().equals(nodeName)) {
-                    renewOnLocal(listener);
+                    renewOnLocal(wrap(listener::onResponse, retryConsumer));
                 } else {
                     renewOnRemote(nodeName, res.getVersion(), listener, tryCount);
                 }
@@ -547,7 +561,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 }
                 listener.onResponse(null);
             }
-        }, listener::onFailure));
+        }, retryConsumer));
     }
 
     private <Request extends ActionRequest, Response extends ActionResponse> void renewOnRemote(final String nodeName, final long version,
@@ -642,11 +656,24 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             logger.debug("Writing request " + request);
         }
 
+        final Consumer<Exception> retryConsumer = e -> {
+            if (tryCount >= writerRetryCount) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Failed to get file_id.", e);
+                }
+                listener.onFailure(e);
+            } else {
+                randomWait();
+                final int count = tryCount + 1;
+                logger.info("Retry a write request(" + count + ")");
+                write(request, listener, count);
+            }
+        };
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setRefresh(true).execute(wrap(res -> {
             if (!res.isExists()) {
                 createStreamOutput(wrap(response -> {
                     write(request, listener, tryCount + 1);
-                }, listener::onFailure), 0);
+                }, retryConsumer), 0);
             } else {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String nodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
@@ -656,17 +683,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                     writeOnRemote(nodeName, res.getVersion(), request, listener, tryCount);
                 }
             }
-        }, e -> {
-            if (logger.isDebugEnabled()) {
-                logger.debug("Failed to get file_id.", e);
-            }
-            if (tryCount >= writerRetryCount) {
-                listener.onFailure(e);
-            } else {
-                randomWait();
-                write(request, listener, tryCount + 1);
-            }
-        }));
+        }, retryConsumer));
     }
 
     private <Request extends ActionRequest, Response extends ActionResponse> void writeOnRemote(final String nodeName, final long version,
