@@ -551,7 +551,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String nodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
                 if (nodeName().equals(nodeName)) {
-                    renewOnLocal(wrap(listener::onResponse, retryConsumer));
+                    renewOnLocal(listener);
                 } else {
                     renewOnRemote(nodeName, res.getVersion(), listener, tryCount);
                 }
