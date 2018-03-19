@@ -34,7 +34,7 @@ public class IndexingProxyPluginTest extends TestCase {
         dataDir = File.createTempFile("es-idxproxy", "");
         dataDir.delete();
         dataDir.mkdirs();
-        System.out.println("idxproxy.data.path: " + dataDir.getAbsolutePath());
+        println("idxproxy.data.path: " + dataDir.getAbsolutePath());
     }
 
     public void setUp(final BiConsumer<Integer, Builder> consumer) throws Exception {
@@ -130,7 +130,7 @@ public class IndexingProxyPluginTest extends TestCase {
                 Curl.get(node1, "/_idxproxy/request").header("Content-Type", "application/json").param("position", "1").execute()) {
             final String content = curlResponse.getContentAsString();
             assertNotNull(content);
-            System.out.println(content);
+            println(content);
         }
 
         assertFilePosition(node1, index1, 2);
@@ -405,7 +405,7 @@ public class IndexingProxyPluginTest extends TestCase {
             assertEquals(500, curlResponse.getHttpStatusCode());
         }
 
-        System.out.println("Waiting for writer...");
+        println("Waiting for writer...");
         Thread.sleep(1000L);
 
         assertNumOfDocs(node1, index1, type, 0);
@@ -430,7 +430,7 @@ public class IndexingProxyPluginTest extends TestCase {
 
         node2.close();
 
-        System.out.println("Waiting for closing node2...");
+        println("Waiting for closing node2...");
         Thread.sleep(1000L);
         runner.ensureYellow();
         runner.refresh();
@@ -776,17 +776,19 @@ public class IndexingProxyPluginTest extends TestCase {
                 @SuppressWarnings("unchecked")
                 final Map<String, Object> hits = (Map<String, Object>) map.get("hits");
                 actual = ((Number) hits.get("total")).longValue();
-                System.out.println("response: " + map);
+                println("response: " + map);
                 if (actual == num) {
                     // Thread.sleep(5000L); // wait for bulk requests
                     // waitForNdocs(node, index, type, num);
                     return;
                 }
+            } catch (final Exception e) {
+                println("Failed to request(" + i + "): " + e.getMessage());
             }
             runner.refresh(builder -> builder.setIndices(index));
             Thread.sleep(1000L);
         }
-        System.out.println(num + " docs are not inserted. " + actual + " docs exist.");
+        println(num + " docs are not inserted. " + actual + " docs exist.");
         fail(num + " docs are not inserted. " + actual + " docs exist.");
     }
 
@@ -826,6 +828,7 @@ public class IndexingProxyPluginTest extends TestCase {
         createRequest(node, index, type, value);
         buf.append("{\"delete\":{\"_index\":\"" + index + "\",\"_type\":\"" + type + "\",\"_id\":\"" + value + "\"}}\n");
 
+        println("bulkRequest");
         try (CurlResponse curlResponse = Curl.post(node, "/_bulk").header("Content-Type", "application/x-ndjson")
                 .param("refresh", "wait_for").body(buf.toString()).execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -835,6 +838,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void deleteByQueryRequest(final Node node, final String index, final String type, final long id) throws IOException {
+        println("deleteByQueryRequest");
         try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/_delete_by_query")
                 .header("Content-Type", "application/json").body("{\"query\":{\"term\":{\"id\":" + id + "}}}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -844,6 +848,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void deleteRequest(final Node node, final String index, final String type, final long id) throws IOException {
+        println("deleteRequest");
         try (CurlResponse curlResponse = Curl.delete(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json")
                 .param("refresh", "wait_for").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -853,6 +858,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void updateByQueryRequest(final Node node, final String index, final String type, final long id) throws IOException {
+        println("updateByQueryRequest");
         try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/_update_by_query")
                 .header("Content-Type", "application/json").body("{\"script\":{\"inline\":\"ctx._source.msg='test " + (id + 200)
                         + "'\",\"lang\":\"painless\"},\"query\":{\"term\":{\"id\":" + id + "}}}")
@@ -864,6 +870,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void updateRequest(final Node node, final String index, final String type, final long id) throws IOException {
+        println("updateRequest");
         try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/" + id + "/_update")
                 .header("Content-Type", "application/json").body("{\"doc\":{\"msg\":\"test " + (id + 100) + "\"}}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -873,6 +880,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void createRequest(final Node node, final String index, final String type, final long id) throws IOException {
+        println("createRequest");
         try (CurlResponse curlResponse = Curl.put(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json")
                 .param("refresh", "wait_for").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -882,6 +890,7 @@ public class IndexingProxyPluginTest extends TestCase {
     }
 
     private void indexRequest(final Node node, final String index, final String type, final long id) throws IOException {
+        println("indexRequest");
         try (CurlResponse curlResponse = Curl.post(node, "/" + index + "/" + type + "/" + id).header("Content-Type", "application/json")
                 .param("refresh", "wait_for").body("{\"id\":" + id + ",\"msg\":\"test " + id + "\"}").execute()) {
             final Map<String, Object> map = curlResponse.getContentAsMap();
@@ -890,4 +899,7 @@ public class IndexingProxyPluginTest extends TestCase {
         }
     }
 
+    private void println(String x) {
+        System.out.println(x);
+    }
 }
