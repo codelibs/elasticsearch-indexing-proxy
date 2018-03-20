@@ -542,16 +542,17 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             } else {
                 randomWait();
                 final int count = tryCount + 1;
-                logger.info("Retry a renew request(" + count + ")");
+                logger.info("[Writer] Retry a renew request(" + count + ")");
                 renew(listener, count);
             }
         };
+        final ActionListener<Response> localListener = wrap(listener::onResponse, retryConsumer);
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setRefresh(true).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String nodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
                 if (nodeName().equals(nodeName)) {
-                    renewOnLocal(listener);
+                    renewOnLocal(localListener);
                 } else {
                     renewOnRemote(nodeName, res.getVersion(), listener, tryCount);
                 }
@@ -665,10 +666,11 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             } else {
                 randomWait();
                 final int count = tryCount + 1;
-                logger.info("Retry a write request(" + count + ")");
+                logger.info("[Writer] Retry a write request(" + count + ")");
                 write(request, listener, count);
             }
         };
+        final ActionListener<Response> localListener = wrap(listener::onResponse, retryConsumer);
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, FILE_ID).setRefresh(true).execute(wrap(res -> {
             if (!res.isExists()) {
                 createStreamOutput(wrap(response -> {
@@ -678,7 +680,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String nodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
                 if (nodeName().equals(nodeName)) {
-                    writeOnLocal(request, listener);
+                    writeOnLocal(request, localListener);
                 } else {
                     writeOnRemote(nodeName, res.getVersion(), request, listener, tryCount);
                 }
