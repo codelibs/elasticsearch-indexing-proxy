@@ -12,6 +12,7 @@ import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.DocWriteResponse.Result;
+import org.elasticsearch.action.IndicesRequest.Replaceable;
 import org.elasticsearch.action.bulk.BulkAction;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
@@ -191,13 +192,36 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
             indexingProxyService.write(request, ActionListener.wrap(res -> {
                 listener.onResponse(executor.get());
             }, listener::onFailure));
-        } else if (indexingProxyService.isRenewAction(action)) {
+            return;
+        }
+
+        if (isRenewAction(action, request)) {
             indexingProxyService.renew(ActionListener.wrap(res -> {
                 chain.proceed(task, action, request, listener);
             }, listener::onFailure));
-        } else {
-            chain.proceed(task, action, request, listener);
+            return;
         }
+
+        chain.proceed(task, action, request, listener);
+    }
+
+    private <Request extends ActionRequest> boolean isRenewAction(final String action, final Request request) {
+        if (!indexingProxyService.isRenewAction(action)) {
+            return false;
+        }
+        if (request instanceof Replaceable) {
+            final String[] indices = ((Replaceable) request).indices();
+            if (indices.length == 0) {
+                return true;
+            }
+            for (final String index : indices) {
+                if (indexingProxyService.isTargetIndex(index)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return true;
     }
 
     public void setIndexingProxyService(final IndexingProxyService indexingProxyService) {
