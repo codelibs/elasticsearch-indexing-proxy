@@ -31,6 +31,7 @@ import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.lucene.uid.Versions;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.reindex.DeleteByQueryRequestBuilder;
@@ -46,7 +47,7 @@ public class RequestSender implements Runnable {
 
     private Path path;
 
-    private long filePosition;
+    private long filePosition = -1;
 
     private long version;
 
@@ -73,6 +74,8 @@ public class RequestSender implements Runnable {
     private final TimeValue senderAliveTime;
 
     private final boolean senderSkipErrorFile;
+
+    private final boolean senderRefreshAsync;
 
     private final TimeValue senderInterval;
 
@@ -105,6 +108,7 @@ public class RequestSender implements Runnable {
         senderRetryCount = IndexingProxyPlugin.SETTING_INXPROXY_SENDER_RETRY_COUNT.get(settings);
         senderRequestRetryCount = IndexingProxyPlugin.SETTING_INXPROXY_SENDER_REQUEST_RETRY_COUNT.get(settings);
         senderSkipErrorFile = IndexingProxyPlugin.SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE.get(settings);
+        senderRefreshAsync = IndexingProxyPlugin.SETTING_INXPROXY_SENDER_REFRESH_ASYNC.get(settings);
         senderAliveTime = IndexingProxyPlugin.SETTING_INXPROXY_SENDER_ALIVE_TIME.get(settings);
         senderLookupFiles = IndexingProxyPlugin.SETTING_INXPROXY_SENDER_LOOKUP_FILES.get(settings);
     }
@@ -134,7 +138,8 @@ public class RequestSender implements Runnable {
         if (logger.isDebugEnabled()) {
             logger.debug("Running RequestSender(" + index + ")");
         }
-        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(true).execute(wrap(res -> {
+        final boolean isRefresh = filePosition == -1 || !senderRefreshAsync;
+        client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(isRefresh).execute(wrap(res -> {
             if (res.isExists()) {
                 final Map<String, Object> source = res.getSourceAsMap();
                 final String workingNodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
@@ -149,8 +154,12 @@ public class RequestSender implements Runnable {
                         docSenderMap.computeIfPresent(index, (k, v) -> v == this ? null : v);
                         // end: system error
                     } else {
-                        filePosition = pos.longValue();
-                        version = res.getVersion();
+                        if(isRefresh) {
+                            filePosition = pos.longValue();
+                            version = res.getVersion();
+                        }else {
+                            version = Versions.MATCH_ANY;
+                        }
                         process(filePosition);
                         // continue
                     }
@@ -290,9 +299,10 @@ public class RequestSender implements Runnable {
         source.put(IndexingProxyPlugin.FILE_POSITION, position);
         source.put(IndexingProxyPlugin.TIMESTAMP, new Date());
         client.prepareUpdate(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setVersion(version).setDoc(source)
-                .setRefreshPolicy(RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
+                .setRefreshPolicy(senderRefreshAsync ? RefreshPolicy.NONE : RefreshPolicy.WAIT_UNTIL).execute(wrap(res -> {
                     errorCount = 0;
                     requestErrorCount = 0;
+                    filePosition = position;
                     threadPool.schedule(TimeValue.ZERO, Names.GENERIC, this);
                     // retry: success
                 }, e -> {

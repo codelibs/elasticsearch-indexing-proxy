@@ -64,6 +64,9 @@ public class IndexingProxyPlugin extends Plugin implements ActionPlugin {
     public static final Setting<Boolean> SETTING_INXPROXY_SENDER_SKIP_ERROR_FILE =
             Setting.boolSetting("idxproxy.sender.skip.error_file", true, Property.NodeScope);
 
+    public static final Setting<Boolean> SETTING_INXPROXY_SENDER_REFRESH_ASYNC =
+            Setting.boolSetting("idxproxy.sender.refresh.async", true, Property.NodeScope);
+
     public static final Setting<TimeValue> SETTING_INXPROXY_SENDER_ALIVE_TIME =
             Setting.timeSetting("idxproxy.sender.alive_time", TimeValue.timeValueMinutes(10), Property.NodeScope);
 
