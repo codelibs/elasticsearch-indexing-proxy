@@ -119,7 +119,7 @@ public class RequestSender implements Runnable {
 
     public void terminate() {
         if (logger.isDebugEnabled()) {
-            logger.debug("Terminating DocIndexer(" + index + ")");
+            logger.debug("Terminating DocIndexer({})", index);
         }
         terminated = true;
     }
@@ -136,7 +136,7 @@ public class RequestSender implements Runnable {
             return;
         }
         if (logger.isDebugEnabled()) {
-            logger.debug("Running RequestSender(" + index + ")");
+            logger.debug("Running RequestSender({})", index);
         }
         final boolean isRefresh = filePosition == -1 || !senderRefreshAsync;
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(isRefresh).execute(wrap(res -> {
@@ -193,7 +193,7 @@ public class RequestSender implements Runnable {
 
     private void process(final long filePosition) {
         if (logger.isDebugEnabled()) {
-            logger.debug("RequestSender(" + index + ") processes " + filePosition);
+            logger.debug("RequestSender({}) processes {}", index, filePosition);
         }
         path = dataPath.resolve(String.format(dataFileFormat, filePosition) + IndexingProxyPlugin.DATA_EXTENTION);
         if (FileAccessUtils.existsFile(path)) {
@@ -242,7 +242,7 @@ public class RequestSender implements Runnable {
         requestPosition++;
         try {
             if (logger.isDebugEnabled()) {
-                logger.debug("RequestSender(" + index + ") is processing requests.");
+                logger.debug("RequestSender({}) is processing requests.", index);
             }
             if (streamInput.available() > 0) {
                 final short classType = streamInput.readShort();
@@ -293,7 +293,7 @@ public class RequestSender implements Runnable {
 
     private void processNext(final long position) {
         if (logger.isDebugEnabled()) {
-            logger.debug("RequestSender(" + index + ") moves next files.");
+            logger.debug("RequestSender({}) moves next files.", index);
         }
         final Map<String, Object> source = new HashMap<>();
         source.put(IndexingProxyPlugin.FILE_POSITION, position);

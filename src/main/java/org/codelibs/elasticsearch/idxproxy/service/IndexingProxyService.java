@@ -234,7 +234,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             }
 
             if (logger.isDebugEnabled()) {
-                logger.debug("Processing Monitor in " + nodeName());
+                logger.debug("Processing Monitor in {}", nodeName());
             }
 
             final Map<String, DiscoveryNode> nodeMap = new HashMap<>();
@@ -276,7 +276,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
             final String nodeName = (String) source.get(IndexingProxyPlugin.NODE_NAME);
             if (Strings.isBlank(nodeName)) {
                 if (logger.isDebugEnabled()) {
-                    logger.debug("RequestSender(" + index + ") is stopped");
+                    logger.debug("RequestSender({}) is stopped", index);
                 }
                 checkSender(nodeMap, hitIter);
                 return;
@@ -309,7 +309,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                                 if (response.isAcknowledged() && !response.isFound()) {
                                     logger.info("Started RequestSender(" + index + ") in " + nodeName);
                                 } else if (logger.isDebugEnabled()) {
-                                    logger.debug("RequestSender(" + index + ") is working in " + nodeName);
+                                    logger.debug("RequestSender({}) is working in {}", index, nodeName);
                                 }
                                 checkSender(nodeMap, hitIter);
                             }
@@ -606,7 +606,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                     public void handleResponse(final CreateResponse response) {
                         if (response.isAcknowledged()) {
                             if (logger.isDebugEnabled()) {
-                                logger.debug("Update file_id in " + nodeName);
+                                logger.debug("Update file_id in {}", nodeName);
                             }
                             listener.onResponse(null);
                         } else {
@@ -654,7 +654,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     private <Request extends ActionRequest, Response extends ActionResponse> void write(final Request request,
             final ActionListener<Response> listener, final int tryCount) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Writing request " + request);
+            logger.debug("Writing request {}", request);
         }
 
         final Consumer<Exception> retryConsumer = e -> {
@@ -729,7 +729,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                     public void handleResponse(final WriteResponse response) {
                         if (response.isAcknowledged()) {
                             if (logger.isDebugEnabled()) {
-                                logger.debug("Stored request in " + nodeName);
+                                logger.debug("Stored request in {}", nodeName);
                             }
                             listener.onResponse(null);
                         } else {
@@ -833,7 +833,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         }
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Starting RequestSender(" + index + ")");
+            logger.debug("Starting RequestSender({})", index);
         }
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(true).execute(wrap(res -> {
             if (res.isExists()) {
@@ -855,7 +855,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
     private void launchRequestSender(final String index, final long filePosition, final long version,
             final ActionListener<Map<String, Object>> listener) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Launching RequestSender(" + index + ")");
+            logger.debug("Launching RequestSender({})", index);
         }
         final Map<String, Object> source = new HashMap<>();
         source.put(IndexingProxyPlugin.NODE_NAME, nodeName());
@@ -887,7 +887,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     public void stopRequestSender(final String index, final ActionListener<Map<String, Object>> listener) {
         if (logger.isDebugEnabled()) {
-            logger.debug("Stopping RequestSender(" + index + ")");
+            logger.debug("Stopping RequestSender({})", index);
         }
         client.prepareGet(IndexingProxyPlugin.INDEX_NAME, IndexingProxyPlugin.TYPE_NAME, index).setRefresh(true).execute(wrap(res -> {
             final Map<String, Object> params = new HashMap<>();
