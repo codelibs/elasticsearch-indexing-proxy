@@ -379,7 +379,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
         client.admin().indices().prepareExists(IndexingProxyPlugin.INDEX_NAME).execute(wrap(response -> {
             if (response.isExists()) {
                 if (logger.isDebugEnabled()) {
-                    logger.debug(IndexingProxyPlugin.INDEX_NAME + " exists.");
+                    logger.debug("{} exists.", IndexingProxyPlugin.INDEX_NAME);
                 }
                 listener.onResponse(response);
             } else {
