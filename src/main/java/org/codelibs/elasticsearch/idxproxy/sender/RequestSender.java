@@ -332,7 +332,7 @@ public class RequestSender implements Runnable {
                     }));
                 } else {
                     if (logger.isDebugEnabled()) {
-                        logger.debug("[Sender][" + index + "][" + requestErrorCount + "] Failed to process the bulk request.", e);
+                        logger.debug("[Sender][{}][{}] Failed to process the bulk request.", index, requestErrorCount, e);
                     }
                     requestErrorCount++;
                     executeBulkRequest(streamInput, builder);
@@ -365,7 +365,7 @@ public class RequestSender implements Runnable {
                     }));
                 } else {
                     if (logger.isDebugEnabled()) {
-                        logger.debug("[" + requestErrorCount + "] Failed to update requests.", e);
+                        logger.debug("[{}] Failed to update requests.", requestErrorCount, e);
                     }
                     requestErrorCount++;
                     executeUpdateByQueryRequest(streamInput, builder);
@@ -399,8 +399,8 @@ public class RequestSender implements Runnable {
                     }));
                 } else {
                     if (logger.isDebugEnabled()) {
-                        logger.debug("[" + requestErrorCount + "] Failed to update [" + builder.request().index() + "]["
-                                + builder.request().type() + "][" + builder.request().id() + "]", e);
+                        logger.debug("[{}] Failed to update [{}][{}][{}]",
+                                requestErrorCount, builder.request().index(), builder.request().type(), builder.request().id(), e);
                     }
                     requestErrorCount++;
                     executeUpdateRequest(streamInput, builder);
@@ -434,8 +434,8 @@ public class RequestSender implements Runnable {
                     }));
                 } else {
                     if (logger.isDebugEnabled()) {
-                        logger.debug("[" + requestErrorCount + "] Failed to index [" + builder.request().index() + "]["
-                                + builder.request().type() + "][" + builder.request().id() + "]", e);
+                        logger.debug("[{}] Failed to index [{}][{}][{}]",
+                                requestErrorCount, builder.request().index(), builder.request().type(), builder.request().id(), e);
                     }
                     requestErrorCount++;
                     executeIndexRequest(streamInput, builder);
@@ -469,8 +469,8 @@ public class RequestSender implements Runnable {
                     }));
                 } else {
                     if (logger.isDebugEnabled()) {
-                        logger.debug("[" + requestErrorCount + "] Failed to delete [" + Arrays.toString(builder.request().indices()) + "]",
-                                e);
+                        logger.debug("[{}] Failed to delete [{}]",
+                                requestErrorCount, Arrays.toString(builder.request().indices()), e);
                     }
                     requestErrorCount++;
                     executeDeleteByQueryRequest(streamInput, builder);
@@ -504,8 +504,8 @@ public class RequestSender implements Runnable {
                     }));
                 } else {
                     if (logger.isDebugEnabled()) {
-                        logger.debug("[" + requestErrorCount + "] Failed to delete [" + builder.request().index() + "]["
-                                + builder.request().type() + "][" + builder.request().id() + "]", e);
+                        logger.debug("[{}] Failed to delete [{}][{}][{}]",
+                                requestErrorCount, builder.request().index(), builder.request().type(), builder.request().id(), e);
                     }
                     requestErrorCount++;
                     executeDeleteRequest(streamInput, builder);
