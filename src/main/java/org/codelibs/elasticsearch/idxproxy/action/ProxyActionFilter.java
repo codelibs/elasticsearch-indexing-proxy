@@ -185,7 +185,7 @@ public class ProxyActionFilter extends AbstractComponent implements ActionFilter
     public <Request extends ActionRequest, Response extends ActionResponse> void apply(final Task task, final String action,
             final Request request, final ActionListener<Response> listener, final ActionFilterChain<Request, Response> chain) {
         if (logger.isDebugEnabled()) {
-            logger.debug("node: " + nodeName() + ", action: " + action + ", request: " + request);
+            logger.debug("node: {}, action: {}, request: {}", nodeName(), action, request);
         }
         final Supplier<Response> executor = getExecutor(task, action, request);
         if (executor != null) {

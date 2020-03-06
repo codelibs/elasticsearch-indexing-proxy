@@ -247,7 +247,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         }, e -> {
                             if (e instanceof IndexNotFoundException) {
                                 if (logger.isDebugEnabled()) {
-                                    logger.debug(IndexingProxyPlugin.INDEX_NAME + " is not found.", e);
+                                    logger.debug("{} is not found.", IndexingProxyPlugin.INDEX_NAME, e);
                                 }
                             } else {
                                 logger.warn("Monitor(" + nodeName() + ") could not access " + IndexingProxyPlugin.INDEX_NAME, e);
@@ -256,7 +256,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
                         }));
             } catch (final IndexNotFoundException e) {
                 if (logger.isDebugEnabled()) {
-                    logger.debug(IndexingProxyPlugin.INDEX_NAME + " is not found.", e);
+                    logger.debug("{} is not found.", IndexingProxyPlugin.INDEX_NAME, e);
                 }
                 threadPool.schedule(monitorInterval, Names.GENERIC, this);
             } catch (final Exception e) {
@@ -504,7 +504,7 @@ public class IndexingProxyService extends AbstractLifecycleComponent implements 
 
     private void closeStreamOutput() {
         if (logger.isDebugEnabled()) {
-            logger.debug("[" + fileId + "] Closing streamOutput.");
+            logger.debug("[{}] Closing streamOutput.", fileId);
         }
         try {
             streamOutput.flush();
